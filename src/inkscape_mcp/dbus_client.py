@@ -65,7 +65,7 @@ class InkscapeDBus:
         try:
             self._send(msg)
             return True
-        except (DBusErrorResponse, OSError, ConnectionError):
+        except (DBusErrorResponse, OSError, ConnectionError, KeyError, FileNotFoundError):
             return False
 
     def list_actions(self, scope: str = "app", window_id: int = 1) -> list[str]:
