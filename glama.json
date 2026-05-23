@@ -7,7 +7,7 @@
       "env": {
         "PYTHONUNBUFFERED": "1"
       },
-      "description": "Inkscape MCP server (FastMCP 3.2+, Linux only): 8 portmanteau tools for headless CLI and live D-Bus SVG/vector workflows; MCP prompts/resources.",
+      "description": "Inkscape MCP server (FastMCP 3.2+): 8 portmanteau tools for headless CLI and live D-Bus SVG/vector workflows; MCP prompts/resources.",
       "capabilities": {
         "tools": {
           "enabled": true,
@@ -47,7 +47,7 @@
   },
   "maintainers": ["aravindev"],
   "name": "inkscape_mcp",
-  "description": "MCP server for Inkscape-backed SVG and vector operations (Linux only). FastMCP 3.2+ with 8 portmanteau tools, registered prompts/resources, and MCPB packaging.",
+  "description": "MCP server for Inkscape-backed SVG and vector operations. FastMCP 3.2+ with 8 portmanteau tools, registered prompts/resources, and MCPB packaging.",
   "type": "mcp_server",
   "status": "beta",
   "framework": "FastMCP 3.2+",

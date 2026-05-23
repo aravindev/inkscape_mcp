@@ -1,4 +1,4 @@
-"""Inkscape MCP Server — drive Inkscape from an AI agent (Linux only).
+"""Inkscape MCP Server — drive Inkscape from an AI agent.
 
 FastMCP 3.2+ server exposing 8 portmanteau tools that shell out to the
 Inkscape CLI or drive a running Inkscape window via D-Bus:

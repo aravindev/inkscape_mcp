@@ -47,7 +47,7 @@ def register_prompts_and_resources(mcp: FastMCP) -> None:
     @mcp.resource("resource://inkscape/capabilities")
     def resource_capabilities() -> str:
         """Static capability summary for indexers and clients."""
-        return """inkscape_mcp (FastMCP 3.1+, Linux-only fork)
+        return """inkscape_mcp (FastMCP 3.2+)
 
 Broad primitives:
   inkscape_live       — drive a running Inkscape via D-Bus (apply_action, edit_xml, insert_svg,

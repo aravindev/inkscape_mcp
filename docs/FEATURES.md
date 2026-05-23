@@ -1,6 +1,6 @@
 # Features
 
-Linux-only MCP server that drives Inkscape 1.4.4 from an AI agent — either
+MCP server that drives Inkscape 1.4.4 from an AI agent — either
 headlessly through the CLI or live alongside a running Inkscape window via
 D-Bus. Built on FastMCP 3.2.
 
@@ -78,5 +78,5 @@ Full operation list per tool in [TOOLS.md](TOOLS.md). Schema parameters in
 
 ## Scope
 
-Linux only. Tested with Inkscape 1.4.4 on Ubuntu 24.04. Older Inkscape
-releases are not supported.
+Tested with Inkscape 1.4.4 on Ubuntu 24.04. Older Inkscape releases are
+not supported.

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "inkscape_mcp"
 version = "1.0.0"
-description = "MCP server that drives the Inkscape CLI from a coding agent (Linux only)."
+description = "MCP server that drives the Inkscape CLI from a coding agent."
 readme = "README.md"
 authors = [
     {name = "Aravind EV", email = "aravindev@live.in"},
@@ -115,6 +115,6 @@ indent-style = "space"
 name = "inkscape_mcp"
 display_name = "Inkscape MCP Server"
 version = "1.0.0"
-description = "Inkscape MCP server (Linux-only, FastMCP 3.2+), portmanteau tools"
+description = "Inkscape MCP server (FastMCP 3.2+), portmanteau tools"
 entry_point = "inkscape_mcp.main:main"
 architecture = "portmanteau"

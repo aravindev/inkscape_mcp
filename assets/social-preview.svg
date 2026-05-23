@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" role="img" aria-label="inkscape-mcp social preview">
+  <title>inkscape-mcp — drive Inkscape from an AI agent</title>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <linearGradient id="curve" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#a78bfa"/>
+    </linearGradient>
+    <linearGradient id="title" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e2e8f0"/>
+      <stop offset="1" stop-color="#cbd5e1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- Subtle grid (vector-editor canvas vibe) -->
+  <g stroke="#1e293b" stroke-width="1" opacity="0.6">
+    <path d="M0 80 H1280 M0 160 H1280 M0 240 H1280 M0 320 H1280 M0 400 H1280 M0 480 H1280 M0 560 H1280"/>
+    <path d="M80 0 V640 M160 0 V640 M240 0 V640 M320 0 V640 M400 0 V640 M480 0 V640 M560 0 V640 M640 0 V640 M720 0 V640 M800 0 V640 M880 0 V640 M960 0 V640 M1040 0 V640 M1120 0 V640 M1200 0 V640"/>
+  </g>
+
+  <!-- Icon (mirrors assets/icon.svg, scaled and positioned on the left) -->
+  <g transform="translate(80 176) scale(2.25)">
+    <rect width="128" height="128" rx="24" ry="24" fill="#0b1020" stroke="#1f2937" stroke-width="1"/>
+    <g stroke="#64748b" stroke-width="1.5" stroke-linecap="round" opacity="0.85">
+      <line x1="32" y1="88" x2="32" y2="36"/>
+      <line x1="96" y1="40" x2="96" y2="92"/>
+    </g>
+    <g fill="#94a3b8">
+      <circle cx="32" cy="36" r="3"/>
+      <circle cx="96" cy="92" r="3"/>
+    </g>
+    <path d="M 32 88 C 32 36, 96 92, 96 40" fill="none" stroke="url(#curve)" stroke-width="8" stroke-linecap="round"/>
+    <g fill="#0b1020" stroke="#a78bfa" stroke-width="3">
+      <rect x="25" y="81" width="14" height="14" rx="2"/>
+      <rect x="89" y="33" width="14" height="14" rx="2"/>
+    </g>
+  </g>
+
+  <!-- Text block on the right -->
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+    <text x="488" y="278" font-size="92" font-weight="800" fill="url(#title)" letter-spacing="-2">inkscape-mcp</text>
+    <text x="488" y="338" font-size="32" font-weight="500" fill="#94a3b8">drive Inkscape from an AI agent</text>
+
+    <g font-size="22" font-weight="600" fill="#cbd5e1">
+      <g transform="translate(488 420)">
+        <rect width="86" height="36" rx="8" fill="#1f2937" stroke="#334155"/>
+        <text x="43" y="24" text-anchor="middle">MCP</text>
+      </g>
+      <g transform="translate(590 420)">
+        <rect width="120" height="36" rx="8" fill="#1f2937" stroke="#334155"/>
+        <text x="60" y="24" text-anchor="middle">FastMCP</text>
+      </g>
+      <g transform="translate(726 420)">
+        <rect width="130" height="36" rx="8" fill="#1f2937" stroke="#334155"/>
+        <text x="65" y="24" text-anchor="middle">Inkscape</text>
+      </g>
+    </g>
+
+    <text x="488" y="500" font-size="20" font-weight="400" fill="#64748b">8 portmanteau tools · stdio + MCP-streamable HTTP · 47 vector ops · live D-Bus</text>
+    <text x="488" y="544" font-size="18" font-weight="500" fill="#475569">github.com/aravindev/inkscape_mcp</text>
+  </g>
+</svg>

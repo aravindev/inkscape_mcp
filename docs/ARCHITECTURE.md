@@ -52,7 +52,7 @@ Depends on Inkscape startup, file size, and path complexity. Tune `process_timeo
 
 ## Platform support
 
-**Linux only.** Tested with Inkscape **1.4.4** on Ubuntu 24.04. Older Inkscape versions are not supported. Python **3.12+** per `pyproject.toml`.
+Tested with Inkscape **1.4.4** on Ubuntu 24.04. Older Inkscape versions are not supported. Python **3.12+** per `pyproject.toml`.
 
 ## Configuration System
 

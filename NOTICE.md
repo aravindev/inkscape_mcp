@@ -9,9 +9,10 @@ upstream project was itself bootstrapped from
 labelled "Initial commit — basic structure from gimp-mcp template" and
 the Inkscape-specific code landed in subsequent commits.
 
-This fork is Linux-only. The upstream targeted Windows first and did not
-run on Linux without patching; Windows-specific compatibility, the
-original test harness, and unused scaffolding have been removed.
+This fork targets Linux (developed and tested on Ubuntu 24.04 with
+Inkscape 1.4.4). The upstream targeted Windows first and did not run on
+Linux without patching; Windows-specific compatibility, the original
+test harness, and unused scaffolding have been removed.
 
 ## Acknowledgement
 

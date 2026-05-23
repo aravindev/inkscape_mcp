@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Linux only. Tested with Inkscape 1.4.4 on Ubuntu 24.04.
+Tested with Inkscape 1.4.4 on Ubuntu 24.04.
 
 ## Installation
 

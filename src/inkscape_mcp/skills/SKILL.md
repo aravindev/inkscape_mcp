@@ -81,7 +81,7 @@ Drive a running Inkscape window via D-Bus + clipboard staging. Every edit is a n
 
 ## Environment
 
-- Linux only. Tested with Inkscape 1.4.4 on Ubuntu 24.04.
+- Tested with Inkscape 1.4.4 on Ubuntu 24.04.
 - Transport: `MCP_TRANSPORT=stdio` (default) or `MCP_TRANSPORT=http` for MCP-streamable HTTP on `/mcp`.
 - Inkscape binary resolved via `INKSCAPE_BIN`, then PATH, then well-known install locations.
 - CLI tools degrade gracefully (with a warning) when Inkscape isn't found; live D-Bus ops require a running Inkscape window.

@@ -1,6 +1,6 @@
 # Installation
 
-Linux only. Tested with Inkscape 1.4.4 on Ubuntu 24.04. Python 3.12+ required.
+Tested with Inkscape 1.4.4 on Ubuntu 24.04. Python 3.12+ required.
 
 ## Prerequisites
 

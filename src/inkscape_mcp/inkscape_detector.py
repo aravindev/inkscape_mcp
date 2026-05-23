@@ -1,4 +1,4 @@
-"""Linux-only Inkscape executable detection."""
+"""Inkscape executable detection."""
 
 from __future__ import annotations
 

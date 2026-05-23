@@ -1,5 +1,9 @@
 # Inkscape MCP
 
+<p align="center">
+  <img src="assets/social-preview.svg" alt="inkscape-mcp — drive Inkscape from an AI agent" width="100%">
+</p>
+
 Let your AI agent design, edit, and analyze vector graphics through Inkscape — live alongside a running Inkscape window, or headless from the command line.
 
 <p>
@@ -11,7 +15,6 @@ Let your AI agent design, edit, and analyze vector graphics through Inkscape —
 </p>
 
 <p>
-  <img src="https://img.shields.io/badge/Linux-only-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux only">
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-1.x-1F6FEB?style=flat-square&logo=anthropic&logoColor=white" alt="MCP"></a>
   <a href="https://github.com/PrefectHQ/fastmcp"><img src="https://img.shields.io/badge/FastMCP-3.2-7c5cfc?style=flat-square" alt="FastMCP"></a>
   <a href="https://inkscape.org"><img src="https://img.shields.io/badge/Inkscape-1.4.4-000000?style=flat-square&logo=inkscape&logoColor=white" alt="Inkscape"></a>
@@ -34,7 +37,7 @@ No external network. Just the Inkscape binary, an optional running Inkscape wind
 
 ## Getting started
 
-> Linux only. Tested with **Inkscape 1.4.4** on Ubuntu 24.04.
+> Tested with **Inkscape 1.4.4** on Ubuntu 24.04.
 
 ```bash
 # 1. Install Inkscape + system headers for pycairo / pygobject
