@@ -2,13 +2,8 @@
   "$schema": "https://glama.ai/mcp/schemas/server.json",
   "mcpServers": {
     "inkscape_mcp": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "${workspaceFolder}",
-        "run",
-        "inkscape_mcp"
-      ],
+      "command": "uvx",
+      "args": ["inkscape_mcp"],
       "env": {
         "PYTHONUNBUFFERED": "1"
       },
