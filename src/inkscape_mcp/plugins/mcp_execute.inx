@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<inkscape-extension xmlns="http://www.inkscape.org/namespace/inkscape/extension">
+    <name>MCP: Execute</name>
+    <id>org.inkscape.mcp.execute</id>
+    <effect>
+        <object-type>all</object-type>
+        <effects-menu hidden="true"/>
+    </effect>
+    <script>
+        <command location="inx" interpreter="python">mcp_execute.py</command>
+    </script>
+</inkscape-extension>

@@ -1,0 +1,115 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inkscape_mcp"
+version = "1.0.0"
+description = "MCP server that drives the Inkscape CLI from a coding agent (Linux only)."
+readme = "README.md"
+authors = [
+    {name = "Aravind EV", email = "aravindev@live.in"},
+]
+requires-python = ">=3.12"
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "fastmcp>=3.2.0",
+    "mcp>=1.0.0",
+    "prefab-ui>=0.14.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "pillow>=10.0.0,<12.0.0",
+    "pyyaml>=6.0.0,<7.0.0",
+    "loguru>=0.7.0",
+    "inkex>=1.2.0",
+    "jeepney>=0.8.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0,<9.0.0",
+    "pytest-asyncio>=0.23.0,<1.0.0",
+    "pytest-timeout>=2.1.0,<3.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pypdf>=4.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/aravindev/inkscape_mcp"
+Repository = "https://github.com/aravindev/inkscape_mcp"
+Issues = "https://github.com/aravindev/inkscape_mcp/issues"
+
+[project.scripts]
+"inkscape_mcp" = "inkscape_mcp.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/inkscape_mcp"]
+
+[tool.hatch.version]
+path = "src/inkscape_mcp/__init__.py"
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# Curated rule families. Strictness over breadth — we'd rather every check
+# we run be one that catches real bugs than fire on stylistic preferences.
+#
+#   E/W  pycodestyle errors + warnings  — basic correctness
+#   F    pyflakes                       — undefined names, unused imports
+#   I    isort                          — import ordering
+#   B    flake8-bugbear                 — likely bug patterns
+#   S    flake8-bandit                  — security smells
+#   UP   pyupgrade                      — modern Python syntax
+#   RUF  ruff-specific                  — high-signal native rules
+select = ["E", "F", "W", "I", "B", "S", "UP", "RUF"]
+# No global ignores — main code is held to the full ruleset. Per-file
+# ignores below relax only test-specific noise.
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use:
+#   S101  — assert (the basic pytest idiom)
+#   S603  — subprocess.run without shell=False explicit (test fixtures spawn helpers)
+#   S607  — partial executable paths in subprocess (test harness convenience)
+#   B008  — function call in default arg (pytest.fixture parametrize values)
+#   ARG*  — fixture args that exist to trigger setup but aren't referenced inside the test body
+#   E402  — late module-level imports for monkeypatched modules
+"tests/**" = ["S101", "S108", "S603", "S607", "B008", "ARG001", "ARG002", "ARG005", "E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.fastmcp]
+name = "inkscape_mcp"
+display_name = "Inkscape MCP Server"
+version = "1.0.0"
+description = "Inkscape MCP server (Linux-only, FastMCP 3.2+), portmanteau tools"
+entry_point = "inkscape_mcp.main:main"
+architecture = "portmanteau"

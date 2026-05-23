@@ -1,0 +1,106 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "mcpServers": {
+    "inkscape_mcp": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "${workspaceFolder}",
+        "run",
+        "inkscape_mcp"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "description": "Inkscape MCP server (FastMCP 3.2+, Linux only): 8 portmanteau tools for headless CLI and live D-Bus SVG/vector workflows; MCP prompts/resources.",
+      "capabilities": {
+        "tools": {
+          "enabled": true,
+          "listChanged": true
+        },
+        "resources": {
+          "enabled": true,
+          "listChanged": true,
+          "subscribe": true
+        },
+        "prompts": {
+          "enabled": true
+        }
+      },
+      "timeout": {
+        "initialize": 30000,
+        "message": 120000
+      },
+      "metadata": {
+        "version": "1.0.0",
+        "author": "Aravind EV",
+        "homepage": "https://github.com/aravindev/inkscape_mcp",
+        "license": "MIT",
+        "tags": [
+          "inkscape",
+          "svg",
+          "vector-graphics",
+          "mcp",
+          "fastmcp",
+          "automation",
+          "design",
+          "creative-tools"
+        ],
+        "categories": ["Design", "Productivity", "Creative", "Development"]
+      }
+    }
+  },
+  "maintainers": ["aravindev"],
+  "name": "inkscape_mcp",
+  "description": "MCP server for Inkscape-backed SVG and vector operations (Linux only). FastMCP 3.2+ with 8 portmanteau tools, registered prompts/resources, and MCPB packaging.",
+  "type": "mcp_server",
+  "status": "beta",
+  "framework": "FastMCP 3.2+",
+  "tools": 8,
+  "transport": ["stdio"],
+  "keywords": [
+    "inkscape",
+    "svg",
+    "vector",
+    "mcp-server",
+    "fastmcp",
+    "graphics",
+    "automation"
+  ],
+  "features": {
+    "vector_editing": {
+      "enabled": true,
+      "capabilities": [
+        "boolean_ops",
+        "path_ops",
+        "trace",
+        "barcode_qr",
+        "export_convert",
+        "lpe",
+        "tile_clone"
+      ]
+    },
+    "document_analysis": {
+      "enabled": true,
+      "capabilities": ["statistics", "validate", "dimensions", "structure"]
+    },
+    "live_canvas": {
+      "enabled": true,
+      "capabilities": [
+        "dbus_actions",
+        "insert_svg",
+        "edit_xml",
+        "path_edit",
+        "rasterize",
+        "inspect"
+      ]
+    },
+    "extensions": {
+      "enabled": true,
+      "capabilities": ["list", "describe", "run", "run_live"]
+    },
+    "mcpb_packaging": {
+      "enabled": true
+    }
+  }
+}

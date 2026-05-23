@@ -1,0 +1,36 @@
+name: Security
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"   # weekly, Monday 02:00 UTC — nightly was overkill
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync project
+        run: uv sync --all-extras
+
+      - name: pip-audit
+        run: |
+          uv pip install pip-audit
+          uv run pip-audit --strict

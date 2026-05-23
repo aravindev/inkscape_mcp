@@ -1,0 +1,44 @@
+# Pre-commit hooks — opt-in commit-time checks.
+# Activate locally once with:   pre-commit install
+# Run on the whole repo:        pre-commit run --all-files
+# Bump pinned versions with:    pre-commit autoupdate
+
+repos:
+  # Ruff: lint + format (mirrors what ci.yml runs).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Secret scanning — fails the commit if it spots common credential
+  # patterns (AWS keys, GitHub tokens, OpenAI keys, private keys,
+  # high-entropy strings near suspicious context, etc.).
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  # Markdown linting — enforces the rules in .markdownlint.json
+  # (heading style, list indent, line length, allowed inline HTML, etc.).
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.45.0
+    hooks:
+      - id: markdownlint
+        args: [--config, .markdownlint.json]
+
+  # Generic file-hygiene checks bundled with pre-commit itself.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml            # parses every .yml/.yaml; catches malformed workflows early
+      - id: check-toml            # parses pyproject.toml etc.
+      - id: check-json            # parses glama.json etc.
+      - id: check-added-large-files
+        args: [--maxkb=1024]      # 1 MB cap — adjust if you intentionally track bigger assets
+      - id: detect-private-key    # SSH / PGP / cert keys committed by mistake
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
