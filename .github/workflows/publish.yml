@@ -15,6 +15,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Install system deps for pycairo / pygobject
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev \
+            libgirepository-2.0-dev \
+            libgirepository1.0-dev \
+            pkg-config \
+            python3-dev
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
