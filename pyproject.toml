@@ -36,6 +36,11 @@ dependencies = [
     "jeepney>=0.8.0",
 ]
 
+[tool.uv]
+override-dependencies = [
+    "lxml>=6.1.0",
+]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3,<10.0.0",

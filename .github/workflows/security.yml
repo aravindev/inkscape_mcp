@@ -40,7 +40,8 @@ jobs:
       - name: Sync project
         run: uv sync --all-extras
 
-      - name: pip-audit
+      - name: pip-audit (third-party deps only)
         run: |
           uv pip install pip-audit
-          uv run pip-audit --strict
+          uv export --no-emit-project --format requirements-txt -o /tmp/requirements.txt
+          uv run pip-audit -r /tmp/requirements.txt --disable-pip --strict
