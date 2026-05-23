@@ -43,8 +43,8 @@ No external network. Just the Inkscape binary, an optional running Inkscape wind
 # 1. Install Inkscape + system headers for pycairo / pygobject
 sudo add-apt-repository ppa:inkscape.dev/stable
 sudo apt update
-sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev pkg-config python3-dev \
-                 xclip
+sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev \
+pkg-config python3-dev xclip
 # xclip stages SVG fragments for clipboard-based insert into the canvas.
 # On Wayland substitute wl-clipboard for xclip — clipboard ops auto-detect.
 
