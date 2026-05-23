@@ -3,11 +3,20 @@
 Let your AI agent design, edit, and analyze vector graphics through Inkscape — live alongside a running Inkscape window, or headless from the command line.
 
 <p>
-  <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://pypi.org/project/inkscape-mcp/"><img src="https://img.shields.io/pypi/v/inkscape-mcp.svg?style=flat-square&logo=pypi&logoColor=white&label=PyPI" alt="PyPI"></a>
+  <a href="https://pypi.org/project/inkscape-mcp/"><img src="https://img.shields.io/pypi/pyversions/inkscape-mcp.svg?style=flat-square&logo=python&logoColor=white&label=Python" alt="Python versions"></a>
+  <a href="https://pypi.org/project/inkscape-mcp/"><img src="https://img.shields.io/pypi/dm/inkscape-mcp.svg?style=flat-square&label=downloads" alt="PyPI downloads"></a>
+  <a href="https://github.com/aravindev/inkscape_mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/aravindev/inkscape_mcp/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI"></a>
+  <a href="https://github.com/aravindev/inkscape_mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/aravindev/inkscape_mcp?style=flat-square&color=yellow" alt="License"></a>
+</p>
+
+<p>
+  <img src="https://img.shields.io/badge/Linux-only-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux only">
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-1.x-1F6FEB?style=flat-square&logo=anthropic&logoColor=white" alt="MCP"></a>
   <a href="https://github.com/PrefectHQ/fastmcp"><img src="https://img.shields.io/badge/FastMCP-3.2-7c5cfc?style=flat-square" alt="FastMCP"></a>
   <a href="https://inkscape.org"><img src="https://img.shields.io/badge/Inkscape-1.4.4-000000?style=flat-square&logo=inkscape&logoColor=white" alt="Inkscape"></a>
-  <img src="https://img.shields.io/badge/Linux-only-FCC624?style=flat-square&logo=linux&logoColor=black" alt="Linux only">
-  <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT">
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/style-ruff-D7FF64?style=flat-square&logo=ruff&logoColor=black" alt="Ruff"></a>
+  <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-enabled-success?style=flat-square&logo=pre-commit&logoColor=white" alt="pre-commit"></a>
 </p>
 
 With Inkscape MCP, your coding agent can do everything a designer does in Inkscape — sketch and reshape paths, apply effects and filters, render LaTeX equations, generate barcodes and QR codes, convert between formats, query and rewrite document structure — through plain conversation instead of menu clicks.
