@@ -5,11 +5,18 @@ Local Linux fork. PRs are not currently accepted upstream — see the repo `READ
 ## Dev setup
 
 ```bash
-sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev pkg-config python3-dev
+# Inkscape 1.4.x (the test suite requires this exact line)
+sudo add-apt-repository ppa:inkscape.dev/stable
+sudo apt update
+sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev pkg-config python3-dev xclip
+
+# Clone + sync
 git clone https://github.com/aravindev/inkscape_mcp.git
 cd inkscape_mcp
 uv sync
 ```
+
+End-user install via PyPI (`pip install inkscape-mcp` or `uvx inkscape_mcp`) is documented in [docs/INSTALL.md](docs/INSTALL.md) — this file is for contributors working from a clone.
 
 ## Workflow
 

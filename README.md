@@ -36,16 +36,11 @@ sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1
 # xclip stages SVG fragments for clipboard-based insert into the canvas.
 # On Wayland substitute wl-clipboard for xclip — clipboard ops auto-detect.
 
-# 2. Clone and sync
-git clone https://github.com/aravindev/inkscape_mcp.git ~/git/inkscape_mcp
-cd ~/git/inkscape_mcp
-uv sync
-
-# 3. Register with Claude Code
-claude mcp add inkscape_mcp -s user -- uv --directory ~/git/inkscape_mcp run inkscape_mcp
+# 2. Register with Claude Code (uvx fetches inkscape-mcp from PyPI on first run)
+claude mcp add inkscape_mcp -s user -- uvx inkscape_mcp
 claude mcp list | grep inkscape_mcp   # → ✓ Connected
 
-# 4. (Re)start Inkscape so it picks up the bundled extensions
+# 3. (Re)start Inkscape so it picks up the bundled extensions
 # The MCP server auto-installs its inkex extensions to
 # ~/.config/inkscape/extensions/inkscape_mcp/ on first boot. Inkscape only
 # scans the extensions dir at startup, so close + reopen Inkscape once.
@@ -55,6 +50,18 @@ claude mcp list | grep inkscape_mcp   # → ✓ Connected
 
 That's it. Ask the agent to convert an SVG, query an object's bounding box, run a boolean union — it'll pick the right tool.
 
+### Alternative install paths
+
+```bash
+# Plain pip into a venv
+pip install inkscape-mcp
+
+# uv into a project
+uv add inkscape-mcp
+```
+
+The PyPI name is `inkscape-mcp` (hyphen). The Python import name is `inkscape_mcp` (underscore — PEP 8 / valid identifier). Both `pip install inkscape-mcp` and `pip install inkscape_mcp` resolve to the same project (PEP 503 name normalization).
+
 ## Configuration
 
 The Claude Code entry the install command above creates looks like:
@@ -63,11 +70,8 @@ The Claude Code entry the install command above creates looks like:
 {
   "mcpServers": {
     "inkscape_mcp": {
-      "command": "uv",
-      "args": [
-        "--directory", "~/git/inkscape_mcp",
-        "run", "inkscape_mcp"
-      ]
+      "command": "uvx",
+      "args": ["inkscape_mcp"]
     }
   }
 }
