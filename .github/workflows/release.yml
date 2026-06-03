@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0  # full history so the changelog generator can walk tags
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
           enable-cache: true
