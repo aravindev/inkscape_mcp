@@ -58,6 +58,7 @@ Issues = "https://github.com/aravindev/inkscape_mcp/issues"
 
 [project.scripts]
 "inkscape_mcp" = "inkscape_mcp.main:main"
+"inkscape-mcp" = "inkscape_mcp.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/inkscape_mcp"]
