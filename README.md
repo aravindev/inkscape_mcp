@@ -26,6 +26,11 @@ With Inkscape MCP, your coding agent can do everything a designer does in Inksca
 
 Pair it with a **running Inkscape window** and the agent works alongside you — it sees what you have selected, opens property dialogs on your behalf, applies edits that appear on the canvas in real time (each one a normal undo entry you can roll back), and rasterizes its own work to inspect and refine the result. Or run it **headlessly** to batch-convert artwork, automate exports, and build pipelines around vector assets — no GUI required. The full Inkscape feature surface, including its hundreds of bundled extensions, is reachable as tool calls.
 
+> **Platform support:** the headless CLI tools run anywhere Inkscape does. The **live**
+> bridge (`inkscape_live`) runs on Linux out of the box, and now on **Windows** too — see
+> [docs/WINDOWS.md](docs/WINDOWS.md) for setup (it drives Inkscape's bundled `gdbus.exe`
+> over a managed D-Bus session bus instead of the Linux `jeepney`/`xclip` path).
+
 ## How it works
 
 1. The agent calls one of eight portmanteau tools — `inkscape_file`, `inkscape_vector`, `inkscape_analysis`, `inkscape_system`, `inkscape_extension`, `inkscape_gradient`, `inkscape_metadata`, or `inkscape_live` — with an `operation` string that picks the actual behavior.

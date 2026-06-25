@@ -59,3 +59,13 @@ This project is distributed under the MIT License — see [`LICENSE`](LICENSE).
 That is the same license as the upstream `sandraschi/inkscape-mcp` and
 `sandraschi/gimp-mcp` projects, so the entire derivative chain is covered
 by consistent terms.
+
+## Windows live support contribution
+
+Windows support for the live bridge (2026, Ergin Atalar) restores the cross-platform
+reach that this Linux fork had removed. It adds `win_dbus_client.py` and `bus_manager.py`
+and platform-aware branches in `tools/live.py`, `clipboard.py`, and
+`extension_bridge.py`, plus `docs/WINDOWS.md`. The live bridge is driven through
+Inkscape's bundled `gdbus.exe` over a managed D-Bus session bus rather than the Linux
+`jeepney`/`xclip` path. Contributed under the same MIT License; Linux/macOS behaviour is
+unchanged.
