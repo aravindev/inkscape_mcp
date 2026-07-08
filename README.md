@@ -1,7 +1,7 @@
 # Inkscape MCP
 
 <p align="center">
-  <img src="assets/social-preview.svg" alt="inkscape-mcp — drive Inkscape from an AI agent" width="100%">
+  <img src="https://raw.githubusercontent.com/aravindev/inkscape_mcp/main/assets/social-preview.png" alt="inkscape-mcp — drive Inkscape from an AI agent" width="100%">
 </p>
 
 Let your AI agent design, edit, and analyze vector graphics through Inkscape — live alongside a running Inkscape window, or headless from the command line.
@@ -161,14 +161,14 @@ Full operation list in [`docs/TOOLS.md`](docs/TOOLS.md).
 
 ## Star history
 
-[![Star History Chart](https://api.star-history.com/svg?repos=aravindev/inkscape_mcp&type=Date)](https://star-history.com/#aravindev/inkscape_mcp&Date)
+[![Star History Chart](https://raw.githubusercontent.com/aravindev/inkscape_mcp/main/assets/star-history.png)](https://star-history.com/#aravindev/inkscape_mcp&Date)
 
 ## Support
 
 If you like my work and found this useful, feel free to support me at [buymeacoffee.com/aravindev](https://buymeacoffee.com/aravindev).
 
 <a href="https://buymeacoffee.com/aravindev">
-  <img src="assets/buymeacoffee-qr.png" alt="Buy me a coffee QR code" width="180">
+  <img src="https://raw.githubusercontent.com/aravindev/inkscape_mcp/main/assets/buymeacoffee-qr.png" alt="Buy me a coffee QR code" width="180">
 </a>
 
 ## License
