@@ -53,6 +53,39 @@ except ImportError:
 logger = setup_logging(component="main")
 
 
+# Default operating guidance surfaced to every MCP client on connect. Steers agents
+# toward live, in-place editing of the user's open document and toward Inkscape's own
+# tools instead of hand-authoring SVG.
+SERVER_INSTRUCTIONS = """\
+Inkscape MCP drives Inkscape both headlessly (CLI) and on a LIVE, already-open Inkscape
+window (the `inkscape_live` tool, over D-Bus). Default working style:
+
+1. Work on the user's OPEN document in place. If Inkscape is running, use `inkscape_live`
+   to read and edit that live document instead of creating a new file — `inkscape_live`
+   with operation `ping` reports whether the bridge is live. Every live edit is a normal,
+   undoable Inkscape command, so a human can co-edit alongside you. NEVER use `open_file`
+   to reload or "refresh" a document you are already editing: it opens a NEW window and
+   breaks the shared canvas. Apply every change in place (edit_xml / apply_action / the
+   effect tools); reserve `open_file` for opening a file the user explicitly asks to open.
+
+2. Prefer Inkscape's own tools over hand-writing SVG when a LIVE one exists: `apply_action`
+   (any Inkscape action), `inkscape_extension` `run_live` for filters and effects (drop
+   shadow, blur, tracing, path effects), plus `path_edit` and the `inspect_*` reads. Note
+   the `inkscape_gradient` and `inkscape_extension` `run` tools are HEADLESS — they operate
+   on a file, not the live document, so do not use them for live in-place work. For live
+   edits with no native op (e.g. editing a gradient on the open document), use
+   `inkscape_live` `edit_xml` (raw-SVG append/set_attr/remove).
+
+3. For live structural edits, `edit_xml` is the reliable, persisting path: it targets
+   nodes by XPath and saves in place. `set_attr`/`remove` accept a multi-node XPath
+   (e.g. `//*[@id='g']/*[position()>9]`). Note: `execute_inkex` does not currently persist
+   document mutations — do not rely on it for edits.
+
+4. On Wayland without `wl-clipboard`, clipboard-based `insert_svg` is unavailable; insert
+   content with `edit_xml` `append` instead.
+"""
+
+
 class InkscapeMCPServer:
     """Main server class for Inkscape MCP integration."""
 
@@ -63,7 +96,7 @@ class InkscapeMCPServer:
             config_path: Optional path to configuration file
         """
         self.config = load_config(config_path) if config_path else InkscapeConfig()
-        self.mcp = FastMCP("Inkscape MCP Server")
+        self.mcp = FastMCP("Inkscape MCP Server", instructions=SERVER_INSTRUCTIONS)
         self.tools = {}
         self.logger = logging.getLogger(__name__)
         self.cli_wrapper: Any | None = None
@@ -319,7 +352,12 @@ class InkscapeMCPServer:
             stop_color: str = "",
             stop_opacity: float = 1.0,
         ) -> dict[str, Any]:
-            """Add/remove/recolor gradient stops; convert linear↔radial."""
+            """Add/remove/recolor gradient stops; convert linear↔radial (headless — edits a file).
+
+            Preferred over hand-writing gradient SVG for file/headless work. NOT a live tool:
+            it reads/writes a file, so for gradients on an OPEN document use `inkscape_live`
+            `edit_xml` instead (avoids a reopen).
+            """
             return await inkscape_gradient_tool(
                 operation=operation,
                 input_path=input_path,
@@ -370,7 +408,22 @@ class InkscapeMCPServer:
             payload: str = "",
             window_id: int = 1,
         ) -> dict[str, Any]:
-            """Drive the running Inkscape GUI via D-Bus + clipboard staging."""
+            """Drive the RUNNING Inkscape GUI — the user's already-open document — live over D-Bus.
+
+            Work on the open document IN PLACE; do not recreate it. Prefer Inkscape's own
+            live tools over hand-writing SVG: use `apply_action` for actions and
+            `inkscape_extension` `run_live` for filters/effects like drop shadow and blur.
+            (The `inkscape_gradient` tool is headless/file-based — not for the live doc.)
+            Use `edit_xml` (raw-SVG set_attr/append/insert_*/remove/replace, targeted by
+            XPath, multi-node capable) for everything else, e.g. editing gradients on the
+            live doc — it is the reliable persisting edit path. `execute_inkex` does NOT
+            persist mutations; don't use it to edit.
+
+            Operations: ping, get_document_xml, get_selection, set_selection, insert_svg,
+            delete_selected, apply_action, list_actions, open_file, save_snapshot, edit_xml,
+            path_edit, inspect_selection/layers/defs/view/pages/element, execute_inkex,
+            rasterize.
+            """
             return await inkscape_live_tool(
                 operation=operation,
                 target=target,
