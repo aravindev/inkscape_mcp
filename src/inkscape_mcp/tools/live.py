@@ -11,9 +11,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from .. import bus_manager
 from ..clipboard import stage_svg_fragment
 from ..dbus_client import InkscapeDBus
 from ..extension_bridge import invoke_extension
+from ..win_dbus_client import WinInkscapeDBus
 
 
 class LiveResult(BaseModel):
@@ -126,11 +128,47 @@ def _resolve_window_id(bus: InkscapeDBus, requested: int) -> int:
     return windows[0]
 
 
-def _get_bus() -> InkscapeDBus:
+def _resolve_inkscape_exe(config: Any) -> str:
+    exe = getattr(config, "inkscape_executable", None) if config is not None else None
+    exe = exe or os.environ.get("INKS_INKSCAPE_BIN") or os.environ.get("INKSCAPE_BIN") or "inkscape"
+    # Inkscape's detector may return inkscape.COM (console wrapper); the GUI binary
+    # inkscape.exe sits beside it and launches without spawning a console window.
+    if exe.lower().endswith("inkscape.com"):
+        gui = Path(exe).with_name("inkscape.exe")
+        if gui.exists():
+            return str(gui)
+    return exe
+
+
+def _get_bus(config: Any = None) -> Any:
+    """Return the platform-appropriate live bridge.
+
+    Windows has no autostarted D-Bus session bus and jeepney can't speak the TCP bus, so
+    we use a ``gdbus.exe``-backed client bound to a managed session bus (see
+    ``bus_manager``). Linux/macOS keep the jeepney client. The Windows client is cheap to
+    build and bound to a possibly-changing bus address, so it is not cached.
+    """
     global _BUS
+    if bus_manager.is_windows():
+        inkscape_exe = _resolve_inkscape_exe(config)
+        gdbus = bus_manager.find_gdbus(inkscape_exe)
+        if not gdbus:
+            raise RuntimeError("gdbus.exe not found (expected next to inkscape.exe or on PATH)")
+        address = bus_manager.ensure_bus(gdbus)
+        return WinInkscapeDBus(gdbus, address)
     if _BUS is None:
         _BUS = InkscapeDBus()
     return _BUS
+
+
+def _auto_launch_inkscape(config: Any) -> bool:
+    """Windows auto-manage: ensure a bus + a running Inkscape under it. Returns ready."""
+    inkscape_exe = _resolve_inkscape_exe(config)
+    gdbus = bus_manager.find_gdbus(inkscape_exe)
+    if not gdbus:
+        raise RuntimeError("gdbus.exe not found (expected next to inkscape.exe or on PATH)")
+    address = bus_manager.ensure_bus(gdbus)
+    return bus_manager.ensure_inkscape(gdbus, address, inkscape_exe)
 
 
 def _result(
@@ -274,6 +312,59 @@ def _op_insert_svg(
         True,
         "staged SVG fragment and triggered paste-in-place",
         data={"window_id": window_id, "bytes": len(payload), "saved": saved},
+        start=start,
+    )
+
+
+# Inkex code that reads the staged fragment and appends its child elements into the
+# live document root. Used where Inkscape exposes no paste-in-place action (e.g. 1.4.x).
+_INSERT_VIA_INKEX_CODE = (
+    "import os as _os\n"
+    "from lxml import etree as _ET\n"
+    "_p = _os.path.expanduser('~/.cache/inkscape_mcp/exchange/insert_fragment.svg')\n"
+    "_root = _ET.parse(_p).getroot()\n"
+    "_added = 0\n"
+    "for _c in list(_root):\n"
+    "    svg.append(_c)\n"
+    "    _added += 1\n"
+    "result = {'added': _added}\n"
+)
+
+
+async def _op_insert_svg_via_inkex(
+    bus: Any,
+    operation: str,
+    payload: str,
+    start: float,
+) -> dict[str, Any]:
+    """Insert an SVG fragment by appending its children to the live document via inkex.
+
+    Inkscape 1.4.x exposes no ``paste-in-place`` action over D-Bus, so the clipboard
+    route is unavailable. We stage the fragment to the exchange dir and run the
+    ``mcp_execute`` extension to splice its child elements into the document — one
+    undoable ``MCP: Execute`` command, like every other bridge edit.
+    """
+    if not payload.strip():
+        return _result(operation, False, "payload (SVG fragment) is required", error="empty payload", start=start)
+
+    from ..extension_bridge import EXCHANGE_DIR
+
+    EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
+    (EXCHANGE_DIR / "insert_fragment.svg").write_text(payload, encoding="utf-8")
+
+    result = await invoke_extension(bus, _EXECUTE_EXTENSION, {"python_code": _INSERT_VIA_INKEX_CODE}, timeout_s=30.0)
+    if not result.success or result.data.get("ok") is False:
+        message = result.error or result.data.get("error", "insert_svg failed")
+        if result.stderr:
+            message = f"{message}\nstderr:\n{result.stderr}"
+        return _result(operation, False, message, data={"stderr": result.stderr}, error=result.error, start=start)
+
+    added = (result.data.get("result") or {}).get("added", 0)
+    return _result(
+        operation,
+        True,
+        f"inserted {added} element(s) into the live document",
+        data={"added": added, "bytes": len(payload)},
         start=start,
     )
 
@@ -968,14 +1059,37 @@ async def inkscape_live(
 ) -> dict[str, Any]:
     """Drive a running Inkscape GUI via D-Bus + clipboard staging."""
     start = time.perf_counter()
-    bus = _get_bus()
+    try:
+        bus = _get_bus(config)
+    except Exception as exc:
+        return _result(
+            operation,
+            False,
+            f"could not initialize live bridge: {exc}",
+            error=str(exc),
+            start=start,
+        )
 
-    # ping is the only op that must not raise when the bridge is down.
+    # ping is the only op that must not raise when the bridge is down. ping reports
+    # current state only — it never auto-launches Inkscape.
     if operation == "ping":
         try:
             return _op_ping(bus, operation, start)
         except Exception as exc:
             return _result(operation, False, f"ping failed: {exc}", error=str(exc), start=start)
+
+    # Auto-manage (Windows): if the bridge isn't live yet, start the bus + Inkscape.
+    if bus_manager.is_windows() and not bus.is_available():
+        try:
+            _auto_launch_inkscape(config)
+        except Exception as exc:
+            return _result(
+                operation,
+                False,
+                f"auto-launch of Inkscape failed: {exc}",
+                error=str(exc),
+                start=start,
+            )
 
     if not bus.is_available():
         return _result(
@@ -1002,6 +1116,8 @@ async def inkscape_live(
         if operation == "set_selection":
             return _op_set_selection(bus, operation, target, start)
         if operation == "insert_svg":
+            if bus_manager.is_windows():
+                return await _op_insert_svg_via_inkex(bus, operation, payload, start)
             return _op_insert_svg(bus, operation, payload, window_id, start)
         if operation == "delete_selected":
             return _op_delete_selected(bus, operation, start)

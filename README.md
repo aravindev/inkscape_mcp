@@ -18,6 +18,7 @@ Let your AI agent design, edit, and analyze vector graphics through Inkscape —
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-1.x-1F6FEB?style=flat-square&logo=anthropic&logoColor=white" alt="MCP"></a>
   <a href="https://github.com/PrefectHQ/fastmcp"><img src="https://img.shields.io/badge/FastMCP-3.2-7c5cfc?style=flat-square" alt="FastMCP"></a>
   <a href="https://inkscape.org"><img src="https://img.shields.io/badge/Inkscape-1.4.4-000000?style=flat-square&logo=inkscape&logoColor=white" alt="Inkscape"></a>
+  <a href="#getting-started"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational?style=flat-square" alt="Platform: Linux | Windows"></a>
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/style-ruff-D7FF64?style=flat-square&logo=ruff&logoColor=black" alt="Ruff"></a>
   <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-enabled-success?style=flat-square&logo=pre-commit&logoColor=white" alt="pre-commit"></a>
 </p>
@@ -73,6 +74,18 @@ uv add inkscape-mcp
 ```
 
 The PyPI name is `inkscape-mcp` (hyphen). The Python import name is `inkscape_mcp` (underscore — PEP 8 / valid identifier). Both `pip install inkscape-mcp` and `pip install inkscape_mcp` resolve to the same project (PEP 503 name normalization).
+
+### Windows
+
+The headless tools install and run exactly as above. The **live** bridge (`inkscape_live`) needs one extra piece: a Windows `dbus-daemon`, which isn't part of a stock Windows install. The simplest source is [MSYS2](https://www.msys2.org/) — install it, then:
+
+```sh
+pacman -S mingw-w64-x86_64-dbus   # provides dbus-daemon.exe; MCP auto-discovers it
+```
+
+`gdbus.exe` itself already ships with Inkscape, and the daemon's dependency DLLs are covered by Inkscape's, so MSYS2 is only the delivery vehicle for that one `dbus-daemon.exe`. If you already have one elsewhere, point `INKSCAPE_MCP_DBUS_DAEMON` at it (and `INKSCAPE_MCP_GDBUS` if `gdbus.exe` isn't found automatically).
+
+On Windows the live bridge **launches and manages its own Inkscape instance** — a hand-launched Inkscape isn't on the bus, so have the agent `open_file` a document to work on it. Tested on Inkscape 1.4.x.
 
 ## Configuration
 

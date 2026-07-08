@@ -25,6 +25,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, field
 from importlib import resources
@@ -36,7 +37,21 @@ from .dbus_client import InkscapeDBus
 log = logging.getLogger(__name__)
 
 EXCHANGE_DIR = Path(os.path.expanduser("~/.cache/inkscape_mcp/exchange"))
-INSTALL_DIR = Path(os.path.expanduser("~/.config/inkscape/extensions/inkscape_mcp"))
+
+
+def _user_extensions_dir() -> Path:
+    """Inkscape's per-user extensions dir, platform-aware.
+
+    Windows keeps preferences/extensions under ``%APPDATA%\\inkscape``; Linux/macOS use
+    the XDG ``~/.config/inkscape`` location.
+    """
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA") or os.path.expanduser("~/AppData/Roaming")
+        return Path(appdata) / "inkscape" / "extensions" / "inkscape_mcp"
+    return Path(os.path.expanduser("~/.config/inkscape/extensions/inkscape_mcp"))
+
+
+INSTALL_DIR = _user_extensions_dir()
 VERSION_FILE = INSTALL_DIR / "VERSION"
 
 # Bump when the bundled plugins change — triggers reinstall on next MCP startup.

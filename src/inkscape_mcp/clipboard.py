@@ -5,12 +5,69 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 
 from lxml import etree
 
 INKSCAPE_SVG_MIME = "image/x-inkscape-svg"
 SVG_NS = "http://www.w3.org/2000/svg"
 _CLIPBOARD_TIMEOUT = 5.0
+
+_GMEM_MOVEABLE = 0x0002
+
+
+def _stage_windows(svg_xml: str) -> None:
+    """Put an SVG fragment on the Windows clipboard under Inkscape's registered format.
+
+    GTK on Windows exposes each clipboard target as a registered clipboard format whose
+    name is the MIME string. Inkscape's ``paste-in-place`` reads the
+    ``image/x-inkscape-svg`` target, so we register that format and store the raw SVG
+    bytes (NUL-terminated for safety). No external tool needed; focus-free.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
+    user32.RegisterClipboardFormatW.restype = wintypes.UINT
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.EmptyClipboard.restype = wintypes.BOOL
+    user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    user32.SetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.restype = wintypes.BOOL
+    kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+    fmt = user32.RegisterClipboardFormatW(INKSCAPE_SVG_MIME)
+    if not fmt:
+        raise RuntimeError(f"RegisterClipboardFormatW failed (err={ctypes.get_last_error()})")
+
+    data = svg_xml.encode("utf-8") + b"\x00"
+    h_global = kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
+    if not h_global:
+        raise RuntimeError("GlobalAlloc failed for clipboard payload")
+    ptr = kernel32.GlobalLock(h_global)
+    if not ptr:
+        raise RuntimeError("GlobalLock failed for clipboard payload")
+    ctypes.memmove(ptr, data, len(data))
+    kernel32.GlobalUnlock(h_global)
+
+    if not user32.OpenClipboard(None):
+        raise RuntimeError(f"OpenClipboard failed (err={ctypes.get_last_error()})")
+    try:
+        user32.EmptyClipboard()
+        # Ownership of h_global passes to the clipboard on success.
+        if not user32.SetClipboardData(fmt, h_global):
+            raise RuntimeError(f"SetClipboardData failed (err={ctypes.get_last_error()})")
+    finally:
+        user32.CloseClipboard()
 
 
 def detect_session() -> str:
@@ -32,6 +89,10 @@ def detect_session() -> str:
 
 def stage_svg_fragment(svg_xml: str) -> None:
     """Push an SVG fragment to the system clipboard with Inkscape's MIME."""
+    if sys.platform == "win32":
+        _stage_windows(svg_xml)
+        return
+
     session = detect_session()
     if session == "x11":
         cmd = ["xclip", "-selection", "clipboard", "-t", INKSCAPE_SVG_MIME]
