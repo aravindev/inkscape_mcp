@@ -78,9 +78,7 @@ class WinInkscapeDBus:
         )
 
     def _introspect(self, object_path: str) -> str:
-        return self._run(
-            ["introspect", "--address", self._address, "--dest", BUS_NAME, "--object-path", object_path]
-        )
+        return self._run(["introspect", "--address", self._address, "--dest", BUS_NAME, "--object-path", object_path])
 
     # ---- scope helpers --------------------------------------------------------------
 
