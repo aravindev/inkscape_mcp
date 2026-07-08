@@ -17,7 +17,37 @@ git status --short          # working tree should be clean (stash unrelated chan
 grep -n 'version = ' pyproject.toml      # current version, two lines
 ```
 
-## 2. Bump the version
+## 2. Pre-release checks — lint, tests, security
+
+The tag triggers the CI + Security workflows; a release must not ship red. Run these
+locally first and fix everything before bumping the version.
+
+```bash
+uv run ruff format --check .    # formatting — run `uv run ruff format .` to fix
+uv run ruff check .             # lint
+uv run pytest -q                # tests
+```
+
+Security — audit third-party deps (mirrors what the Security workflow runs):
+
+```bash
+uv export --no-emit-project --format requirements-txt -o /tmp/req.txt
+uv run --with pip-audit pip-audit -r /tmp/req.txt --disable-pip --strict
+```
+
+If pip-audit flags anything, bump the affected package(s) to a fixed (ideally the latest)
+version and re-audit until it reports "No known vulnerabilities found":
+
+```bash
+uv lock --upgrade-package <pkg>        # one --upgrade-package per package
+# then re-export + re-audit (above) to confirm clean
+```
+
+Transitive deps (e.g. `joserfc`, `pydantic-settings`) often have no Dependabot PR — bump
+them here manually. Commit any format/lint and `uv.lock` fixes (as their own commit) so
+`main` is green before you tag.
+
+## 3. Bump the version
 
 The version string lives in exactly three release-relevant locations. Set all three to the
 new `X.Y.Z`:
@@ -39,7 +69,7 @@ grep -rn 'version = "<NEW>"\|__version__ = "<NEW>"' pyproject.toml src/inkscape_
 # expect 3 hits: pyproject.toml:7, pyproject.toml:118, __init__.py
 ```
 
-## 3. Commit and tag
+## 4. Commit and tag
 
 Keep the commit subject one line, no body unless something is non-obvious; no Co-Authored-By
 trailer (repo convention).
@@ -51,7 +81,7 @@ git push origin main
 git push origin "v$NEW"
 ```
 
-## 4. Confirm the Release workflow
+## 5. Confirm the Release workflow
 
 Pushing the `v*` tag triggers `.github/workflows/release.yml`, which builds the dist and
 creates the GitHub release (notes auto-generated from commits since the last tag).
@@ -62,7 +92,7 @@ gh run list --workflow=release.yml --limit 1     # expect success
 gh release view "v$NEW" --json name,isDraft,publishedAt
 ```
 
-## 5. Manually publish to PyPI — REQUIRED
+## 6. Manually publish to PyPI — REQUIRED
 
 `.github/workflows/publish.yml` listens for `release: published`, **but GitHub does not
 cascade workflow events from a release created by the built-in `GITHUB_TOKEN`** (which is
@@ -78,7 +108,7 @@ gh run watch "$(gh run list --workflow=publish.yml --limit 1 --json databaseId -
 
 It re-runs tests, builds, and publishes via PyPI Trusted Publisher (OIDC — no token).
 
-## 6. Verify
+## 7. Verify
 
 ```bash
 gh run list --limit 5     # CI, Security, Release, Publish should all be success
@@ -90,5 +120,5 @@ Tell the user the version is live, and link the release + PyPI page.
 
 - To skip the manual publish in future, either add `push: tags: ["v*"]` as a trigger to
   `publish.yml`, or have the Release workflow create the release with a PAT/GitHub App token
-  so the `published` event cascades. Until then, step 5 is mandatory.
+  so the `published` event cascades. Until then, step 6 is mandatory.
 - If `git pull` is blocked by local changes, `git stash` → pull → `git stash pop`.
