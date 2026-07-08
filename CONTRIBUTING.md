@@ -1,7 +1,5 @@
 # Contributing to inkscape_mcp
 
-Local Linux fork. PRs are not currently accepted upstream — see the repo `README.md` for context.
-
 ## Dev setup
 
 ```bash
