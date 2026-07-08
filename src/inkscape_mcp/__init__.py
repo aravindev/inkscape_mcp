@@ -15,7 +15,7 @@ Inkscape CLI or drive a running Inkscape window via D-Bus:
 Entry point: ``inkscape_mcp.main:main``.
 """
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 __author__ = "Aravind EV"
 __email__ = "aravindev@live.in"
 
