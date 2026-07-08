@@ -7,17 +7,6 @@ because they shell out to `inkscape.exe`. This adds the missing piece: driving a
 **running Inkscape GUI** live, focus-free, so an agent and a human can co-edit the same
 document.
 
-## Why it didn't work before
-
-The live bridge was built for Linux and depended on three Linux-only mechanisms:
-
-1. **D-Bus** to Inkscape's `org.gtk.Actions` surface, via `jeepney`. Windows has no
-   autostarted D-Bus session bus, and `jeepney` only speaks the `unix:` transport.
-2. **Clipboard staging** via `xclip` / `wl-copy` — neither exists on Windows.
-3. **Extension triggering** through a D-Bus action, fired over that same bus.
-
-On Windows the live tool simply reported *"Inkscape D-Bus bridge not reachable."*
-
 ## How the Windows path works
 
 | Concern | Linux (existing) | Windows (this change) |
@@ -63,11 +52,11 @@ Linux/macOS behaviour is unchanged — every Windows branch is guarded by
 
 ## Install & configure
 
-Install the server (from this fork, until the change is merged upstream):
+Install the server:
 
 ```sh
-git clone https://github.com/erginatalar/inkscape-mcp-windows
-cd inkscape-mcp-windows
+git clone https://github.com/aravindev/inkscape_mcp
+cd inkscape_mcp
 uv venv
 uv pip install -e .
 ```
@@ -90,7 +79,7 @@ Point your MCP client at it. Example for a Claude config (`mcpServers`):
 Or run it straight from the repo with `uvx`:
 
 ```sh
-uvx --from git+https://github.com/erginatalar/inkscape-mcp-windows inkscape-mcp
+uvx --from git+https://github.com/aravindev/inkscape_mcp inkscape-mcp
 ```
 
 ### Environment variables

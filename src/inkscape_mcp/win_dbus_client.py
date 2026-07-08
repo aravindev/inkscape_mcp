@@ -1,10 +1,5 @@
 """Windows D-Bus client for the running Inkscape GUI, via the bundled ``gdbus.exe``.
 
-Why not jeepney (like ``dbus_client.InkscapeDBus``)? On Windows the D-Bus session bus
-is a TCP socket (``tcp:host=localhost,port=...``), and jeepney 0.9 only supports the
-``unix:`` transport. Inkscape ships ``gdbus.exe`` next to ``inkscape.exe``, which speaks
-TCP natively, so we drive the same ``org.gtk.Actions`` surface by shelling out to it.
-
 This class is a drop-in for ``InkscapeDBus`` — identical method surface
 (``is_available``/``list_actions``/``describe``/``activate``/``open_file``/
 ``list_windows``) — selected by ``tools.live._get_bus()`` on Windows.
