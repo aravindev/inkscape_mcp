@@ -223,10 +223,22 @@ class InkscapeCliWrapper:
         """
         timeout = timeout or self.config.process_timeout
 
+        # A bare string here would be splatted character-by-character by the join below
+        # (`"a;b"` -> `a;;;b`). Inkscape then rejects every character, exits 0 anyway, and
+        # the export silently comes out unmodified. Callers pass this in as `Any`, so
+        # neither ruff nor mypy can catch it — fail loudly instead.
+        if isinstance(actions, str):
+            raise TypeError(f"actions must be a list of action strings, got str: {actions!r}")
+
         cmd_args = self._base_cmd()
 
-        # Construct the actions string
-        actions_str = ";".join(actions)
+        # Build the complete action chain BEFORE rendering the flag: the export action has
+        # to end up inside --actions=, not tacked onto whatever argv element happens to be
+        # last (which was --export-filename, producing "Unknown export type: svg;export-do").
+        chain = list(actions)
+        if output_path and not any(a == "export-do" or a.startswith("export-do:") for a in chain):
+            chain.append("export-do")
+        actions_str = ";".join(chain)
 
         # Add input file
         cmd_args.append(str(Path(input_path).resolve()))
@@ -234,12 +246,8 @@ class InkscapeCliWrapper:
         # Add the actions flag
         cmd_args.append(f"--actions={actions_str}")
 
-        # If an output path is specified, add an export action to the chain
         if output_path:
             cmd_args.append(f"--export-filename={Path(output_path).resolve()!s}")
-            # Ensure an export action is part of the chain if output_path is given
-            if "export-do" not in actions_str:
-                cmd_args[-1] += ";export-do"  # Append export-do if not already present
 
         result = await self._execute_command(cmd_args, timeout)
 
