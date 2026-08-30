@@ -14,7 +14,7 @@ class AGLayerAnimation(inkex.EffectExtension):
 
     def add_arguments(self, pars):
         pars.add_argument("--duration", type=float, default=2.0, help="Animation duration in seconds")
-        pars.add_argument("--loop", type=bool, default=True, help="Loop animation")
+        pars.add_argument("--loop", type=inkex.Boolean, default=True, help="Loop animation")
         pars.add_argument("--easing", type=str, default="ease-in-out", help="CSS easing function")
 
     def effect(self):
