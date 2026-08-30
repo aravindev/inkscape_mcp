@@ -15,8 +15,12 @@ Layout:
     result.json  (extension -> MCP)
     stderr.txt   (extension stderr capture, if any)
 
-Concurrency: serial. Extensions take ~100ms-2s; we don't expect parallel
-invocations from a single MCP client. If that changes, wrap with a lock.
+Concurrency: the filenames above are fixed, so two overlapping invocations would
+trample each other — B's spec would overwrite A's input.json, and B's unlink would
+delete the result A is waiting for. Per-call unique names aren't an option: the
+`.noprefs` D-Bus action carries no arguments, so the plugin has no way to be told
+which file to read. Instead every invocation is serialised through `BRIDGE_LOCK`,
+which also guards the shared (non-thread-safe) jeepney connection.
 """
 
 from __future__ import annotations
@@ -37,6 +41,11 @@ from .dbus_client import InkscapeDBus
 log = logging.getLogger(__name__)
 
 EXCHANGE_DIR = Path(os.path.expanduser("~/.cache/inkscape_mcp/exchange"))
+
+# Serialises every use of the exchange directory AND of the live D-Bus connection.
+# Live edits are inherently serial against a single GUI, so this costs nothing in
+# practice and removes a whole class of cross-talk between concurrent tool calls.
+BRIDGE_LOCK = asyncio.Lock()
 
 
 def _user_extensions_dir() -> Path:
@@ -84,7 +93,24 @@ async def invoke_extension(
     `spec` is JSON-serialised into input.json before invocation. Returns the
     parsed result, or an ExchangeResult with success=False on any failure
     (timeout, malformed result, bus error).
+
+    Held under `BRIDGE_LOCK` for its whole duration — the exchange filenames are fixed,
+    so a concurrent call would clobber this one's input and result.
     """
+    async with BRIDGE_LOCK:
+        return await _invoke_extension_locked(bus, action, spec, scope=scope, window_id=window_id, timeout_s=timeout_s)
+
+
+async def _invoke_extension_locked(
+    bus: InkscapeDBus,
+    action: str,
+    spec: dict[str, Any],
+    *,
+    scope: str,
+    window_id: int,
+    timeout_s: float,
+) -> ExchangeResult:
+    """Body of `invoke_extension`. Caller must already hold `BRIDGE_LOCK`."""
     EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
     input_path = EXCHANGE_DIR / "input.json"
     result_path = EXCHANGE_DIR / "result.json"
@@ -99,6 +125,11 @@ async def invoke_extension(
 
     input_path.write_text(json.dumps(spec))
 
+    # Deliberately NOT run via asyncio.to_thread: InkscapeDBus keeps one shared jeepney
+    # connection, and handing it to a worker thread while another coroutine uses it from
+    # the event loop corrupts the reply stream. Activate is a sub-millisecond local IPC
+    # round-trip anyway; the part that actually takes time is the poll below, which does
+    # yield.
     try:
         bus.activate(action, scope=scope, window_id=window_id)
     except Exception as exc:

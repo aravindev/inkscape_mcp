@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -35,6 +36,12 @@ _EXPORT_POLL_TIMEOUT_S = 5.0
 _EXPORT_POLL_INTERVAL_S = 0.05
 
 _AUTO_SAVE_ENV = "INKSCAPE_MCP_AUTO_SAVE"
+_AUTO_CLEANUP_ENV = "INKSCAPE_MCP_AUTO_CLEANUP"
+
+# Scratch snapshots/rasters are debugging aids the agent may still be holding a path to,
+# so keep the recent ones; anything older than this is dead weight.
+_SCRATCH_MAX_AGE_S = 24 * 60 * 60
+_SCRATCH_KEEP = 20
 
 # Actions that don't modify the document. After firing these we skip the implicit
 # document-save. Curated; conservative — when in doubt, treat as mutating.
@@ -195,19 +202,43 @@ def _looks_like_selector(target: str) -> bool:
     return any(ch in target for ch in "#.[ >:,*")
 
 
+def _prune_scratch(max_age_s: float = _SCRATCH_MAX_AGE_S, keep: int = _SCRATCH_KEEP) -> int:
+    """Drop old scratch snapshots/rasters. Every snapshot and rasterize wrote a
+    uuid-named file here and nothing ever removed them."""
+    try:
+        files = [p for p in _SCRATCH_DIR.glob("*") if p.is_file()]
+    except OSError:
+        return 0
+    now = time.time()
+    # Keep the most recent `keep` regardless of age — a caller may still hold the path.
+    stale = sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[keep:]
+    removed = 0
+    for p in stale:
+        try:
+            if now - p.stat().st_mtime > max_age_s:
+                p.unlink()
+                removed += 1
+        except OSError:
+            pass
+    return removed
+
+
 def _scratch_path() -> Path:
     _SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+    if os.environ.get(_AUTO_CLEANUP_ENV) != "0":
+        _prune_scratch()
     return _SCRATCH_DIR / f"snap-{uuid.uuid4().hex}.svg"
 
 
 def _export_document(bus: InkscapeDBus, scratch: Path) -> None:
-    """Drive Inkscape's export-* actions to dump the current doc as plain-ish SVG."""
+    """Drive Inkscape's export-* actions to dump the current doc as plain-ish SVG.
+
+    Blocking: busy-polls for up to `_EXPORT_POLL_TIMEOUT_S`. Kept for synchronous
+    callers and tests; anything on the request path must use `_export_document_async`.
+    """
     if scratch.exists():
         scratch.unlink()
-    bus.activate("export-filename", [str(scratch)], scope="app")
-    bus.activate("export-type", ["svg"], scope="app")
-    bus.activate("export-overwrite", [True], scope="app")
-    bus.activate("export-do", scope="app")
+    _trigger_export(bus, scratch)
 
     deadline = time.monotonic() + _EXPORT_POLL_TIMEOUT_S
     while time.monotonic() < deadline:
@@ -215,6 +246,41 @@ def _export_document(bus: InkscapeDBus, scratch: Path) -> None:
             return
         time.sleep(_EXPORT_POLL_INTERVAL_S)
     raise TimeoutError(f"Inkscape did not produce {scratch} within {_EXPORT_POLL_TIMEOUT_S}s")
+
+
+def _trigger_export(bus: InkscapeDBus, scratch: Path) -> None:
+    """Fire the export-* action sequence. Four fast local IPC round-trips."""
+    bus.activate("export-filename", [str(scratch)], scope="app")
+    bus.activate("export-type", ["svg"], scope="app")
+    bus.activate("export-overwrite", [True], scope="app")
+    bus.activate("export-do", scope="app")
+
+
+async def _export_document_async(bus: InkscapeDBus, scratch: Path) -> None:
+    """Export the live document without blocking the event loop.
+
+    The old version busy-waited with time.sleep for up to 5s on the request path, which
+    froze every other in-flight tool call. Only the *wait* is slow — the D-Bus activates
+    are sub-millisecond — so the poll simply yields instead. The activates stay on the
+    event loop thread on purpose: InkscapeDBus shares one jeepney connection, and running
+    it in a worker thread alongside main-thread users corrupts the reply stream.
+
+    Serialised under BRIDGE_LOCK so a concurrent extension invocation can't interleave
+    its own export-* settings with ours.
+    """
+    from ..extension_bridge import BRIDGE_LOCK
+
+    async with BRIDGE_LOCK:
+        if scratch.exists():
+            scratch.unlink()
+        _trigger_export(bus, scratch)
+
+        deadline = time.monotonic() + _EXPORT_POLL_TIMEOUT_S
+        while time.monotonic() < deadline:
+            if scratch.exists() and scratch.stat().st_size > 0:
+                return
+            await asyncio.sleep(_EXPORT_POLL_INTERVAL_S)
+        raise TimeoutError(f"Inkscape did not produce {scratch} within {_EXPORT_POLL_TIMEOUT_S}s")
 
 
 def _op_ping(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
@@ -243,9 +309,9 @@ def _op_ping(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
     )
 
 
-def _op_get_document_xml(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
+async def _op_get_document_xml(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
     scratch = _scratch_path()
-    _export_document(bus, scratch)
+    await _export_document_async(bus, scratch)
     xml = scratch.read_text(encoding="utf-8")
     return _result(
         operation,
@@ -347,12 +413,21 @@ async def _op_insert_svg_via_inkex(
     if not payload.strip():
         return _result(operation, False, "payload (SVG fragment) is required", error="empty payload", start=start)
 
-    from ..extension_bridge import EXCHANGE_DIR
+    from ..extension_bridge import BRIDGE_LOCK, EXCHANGE_DIR, _invoke_extension_locked
 
-    EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
-    (EXCHANGE_DIR / "insert_fragment.svg").write_text(payload, encoding="utf-8")
-
-    result = await invoke_extension(bus, _EXECUTE_EXTENSION, {"python_code": _INSERT_VIA_INKEX_CODE}, timeout_s=30.0)
+    # The staged fragment shares the exchange dir's fixed-name problem, so it has to be
+    # written and consumed inside the same critical section as the invocation itself.
+    async with BRIDGE_LOCK:
+        EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
+        (EXCHANGE_DIR / "insert_fragment.svg").write_text(payload, encoding="utf-8")
+        result = await _invoke_extension_locked(
+            bus,
+            _EXECUTE_EXTENSION,
+            {"python_code": _INSERT_VIA_INKEX_CODE},
+            scope="app",
+            window_id=1,
+            timeout_s=30.0,
+        )
     if not result.success or result.data.get("ok") is False:
         message = result.error or result.data.get("error", "insert_svg failed")
         if result.stderr:
@@ -466,7 +541,7 @@ def _load_action_descriptions(cli_executable: str = "inkscape") -> dict[str, str
     return result
 
 
-def _op_list_actions(
+async def _op_list_actions(
     bus: InkscapeDBus,
     operation: str,
     window_id: int,
@@ -479,7 +554,9 @@ def _op_list_actions(
     name and description. Use it to narrow the 1244-action surface (e.g.
     ``target="layer-"`` for layer ops, ``target="snap"`` for snap toggles).
     """
-    descriptions = _load_action_descriptions()
+    # First call shells out to `inkscape --action-list` with a 10s timeout; keep that off
+    # the event loop. Subsequent calls hit the module-level cache and return immediately.
+    descriptions = await asyncio.to_thread(_load_action_descriptions)
     app_names = sorted(bus.list_actions("app"))
     window_names = sorted(bus.list_actions("window", window_id))
 
@@ -717,7 +794,7 @@ async def _op_execute_inkex(
     )
 
 
-def _op_rasterize(
+async def _op_rasterize(
     bus: InkscapeDBus,
     operation: str,
     target: str,
@@ -737,7 +814,6 @@ def _op_rasterize(
     the file directly when it needs the pixels.
     """
     import json as _json
-    import subprocess
 
     if cli_wrapper is None or config is None:
         return _result(
@@ -763,7 +839,7 @@ def _op_rasterize(
 
     # Snapshot the live doc so the export reflects in-memory state.
     snapshot = _scratch_path()
-    _export_document(bus, snapshot)
+    await _export_document_async(bus, snapshot)
 
     # Choose output path.
     if filename:
@@ -804,22 +880,26 @@ def _op_rasterize(
             return _result(operation, False, f"dpi must be a number: {dpi!r}", error="bad dpi", start=start)
     cmd.append(str(snapshot))
 
+    # asyncio subprocess rather than subprocess.run: a 60s blocking wait here froze every
+    # other in-flight tool call (this runs on the request path).
     try:
-        completed = subprocess.run(  # noqa: S603 — cmd is the inkscape executable + export flags built from validated args
-            cmd,
-            capture_output=True,
-            timeout=60,
-            check=False,
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-    except subprocess.TimeoutExpired:
+        _, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
         return _result(operation, False, "rasterize timed out after 60s", error="timeout", start=start)
 
-    if completed.returncode != 0 or not out_path.exists():
-        stderr_tail = (completed.stderr or b"").decode("utf-8", errors="replace")[-1000:]
+    if proc.returncode != 0 or not out_path.exists():
+        stderr_tail = (stderr_b or b"").decode("utf-8", errors="replace")[-1000:]
         return _result(
             operation,
             False,
-            f"inkscape export failed (rc={completed.returncode}); stderr: {stderr_tail}",
+            f"inkscape export failed (rc={proc.returncode}); stderr: {stderr_tail}",
             data={"argv": cmd, "stderr": stderr_tail},
             error="export failed",
             start=start,
@@ -1050,9 +1130,9 @@ async def _op_path_edit(
     )
 
 
-def _op_save_snapshot(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
+async def _op_save_snapshot(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
     scratch = _scratch_path()
-    _export_document(bus, scratch)
+    await _export_document_async(bus, scratch)
     xml = scratch.read_text(encoding="utf-8")
     return _result(
         operation,
@@ -1125,7 +1205,7 @@ async def inkscape_live(
 
     try:
         if operation == "get_document_xml":
-            return _op_get_document_xml(bus, operation, start)
+            return await _op_get_document_xml(bus, operation, start)
         if operation == "get_selection":
             return await _op_get_selection(bus, operation, start)
         if operation == "set_selection":
@@ -1139,11 +1219,11 @@ async def inkscape_live(
         if operation == "apply_action":
             return _op_apply_action(bus, operation, target, payload, window_id, start)
         if operation == "list_actions":
-            return _op_list_actions(bus, operation, window_id, target, start)
+            return await _op_list_actions(bus, operation, window_id, target, start)
         if operation == "open_file":
             return _op_open_file(bus, operation, target, start)
         if operation == "save_snapshot":
-            return _op_save_snapshot(bus, operation, start)
+            return await _op_save_snapshot(bus, operation, start)
         if operation == "edit_xml":
             return await _op_edit_xml(bus, operation, target, payload, window_id, start)
         if operation == "path_edit":
@@ -1163,7 +1243,7 @@ async def inkscape_live(
         if operation == "execute_inkex":
             return await _op_execute_inkex(bus, operation, payload, start)
         if operation == "rasterize":
-            return _op_rasterize(bus, operation, target, payload, cli_wrapper, config, start)
+            return await _op_rasterize(bus, operation, target, payload, cli_wrapper, config, start)
         return _result(
             operation,
             False,

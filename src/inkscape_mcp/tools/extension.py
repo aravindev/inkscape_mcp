@@ -556,18 +556,6 @@ async def _op_run_live(
     else:
         wrapper_id = f"mcp-ext-{_uuid.uuid4().hex[:8]}"
 
-    # If caller supplied an id, pre-remove any existing element with that id
-    # so we can write the fresh wrapper in its place. Tolerate the
-    # "not found" case — the id simply hasn't been used yet.
-    replaced_existing = False
-    if requested_wrapper_id:
-        remove_spec = {"xpath": f"//*[@id={wrapper_id!r}]", "action": "remove"}
-        rm_res = await invoke_extension(bus, _EDIT_XML_EXTENSION, remove_spec, timeout_s=10.0)
-        if rm_res.success and rm_res.data.get("ok") is True:
-            replaced_existing = True
-        # If remove failed because the id wasn't present, mcp_edit_xml returns
-        # ok:false with "xpath matched no nodes" — that's fine, just continue.
-
     scratch = _scratch_path()
     scratch.write_text(_EMPTY_CANVAS, encoding="utf-8")
 
@@ -602,6 +590,20 @@ async def _op_run_live(
             error="empty output",
             start=start,
         )
+
+    # Only now, with a validated non-empty wrapper in hand, remove the element we're about
+    # to replace. Removing up front (as this used to) meant every failure path below —
+    # extension error, unparseable output, and especially the "transformer extension on an
+    # empty canvas" case that the docstring warns about — destroyed the caller's existing
+    # content and appended nothing in its place.
+    replaced_existing = False
+    if requested_wrapper_id:
+        remove_spec = {"xpath": f"//*[@id={wrapper_id!r}]", "action": "remove"}
+        rm_res = await invoke_extension(bus, _EDIT_XML_EXTENSION, remove_spec, timeout_s=10.0)
+        if rm_res.success and rm_res.data.get("ok") is True:
+            replaced_existing = True
+        # If remove failed because the id wasn't present, mcp_edit_xml returns
+        # ok:false with "xpath matched no nodes" — that's fine, just continue.
 
     apply_spec = {
         "xpath": "/svg:svg",
