@@ -17,6 +17,7 @@ An Inkscape extension consists of two files:
 import inkex
 from inkex import PathElement, Style
 
+
 class ExampleExtension(inkex.EffectExtension):
     """Example extension that demonstrates basic functionality."""
 
@@ -33,10 +34,11 @@ class ExampleExtension(inkex.EffectExtension):
         for elem in self.svg.selection:
             if isinstance(elem, PathElement):
                 # Modify the selected path
-                elem.style['stroke'] = 'red'
-                elem.style['stroke-width'] = str(param2)
+                elem.style["stroke"] = "red"
+                elem.style["stroke-width"] = str(param2)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     ExampleExtension().run()
 ```
 

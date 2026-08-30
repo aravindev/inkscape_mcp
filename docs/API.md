@@ -9,12 +9,12 @@ Every tool returns a dict containing at minimum:
 
 ```python
 {
-  "success": bool,
-  "operation": str,
-  "message": str,            # short human-readable summary
-  "data": dict | list | None, # operation-specific result payload
-  "execution_time_ms": float,
-  "error": str,              # only set when success=False
+    "success": bool,
+    "operation": str,
+    "message": str,  # short human-readable summary
+    "data": dict | list | None,  # operation-specific result payload
+    "execution_time_ms": float,
+    "error": str,  # only set when success=False
 }
 ```
 
@@ -163,12 +163,12 @@ Failure payloads keep the same envelope, with `success=False`:
 
 ```python
 {
-  "success": False,
-  "operation": "...",
-  "message": "Human-readable description",
-  "error": "ErrorType or short error string",
-  "execution_time_ms": 12.3,
-  "data": {...}  # optional diagnostic info
+    "success": False,
+    "operation": "...",
+    "message": "Human-readable description",
+    "error": "ErrorType or short error string",
+    "execution_time_ms": 12.3,
+    "data": {...},  # optional diagnostic info
 }
 ```
 
