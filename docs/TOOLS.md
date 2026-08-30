@@ -24,7 +24,7 @@ that picks the actual behavior — keeps the surface scannable for the agent.
 
 ## inkscape_vector
 
-47 operations. The full list is enumerated in
+49 operations. The full list is enumerated in
 `src/inkscape_mcp/mcp_tool_types.py` (`InkscapeVectorOperation` Literal).
 Highlights:
 

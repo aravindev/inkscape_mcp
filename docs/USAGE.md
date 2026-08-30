@@ -9,7 +9,7 @@ Full parameter detail: [API.md](API.md). Install: [INSTALL.md](INSTALL.md). Inks
 | Tool | Role |
 |------|------|
 | `inkscape_file` | `load`, `save`, `convert`, `info`, `validate`, `list_formats`, `batch_convert` |
-| `inkscape_vector` | trace, boolean, simplify, optimize, render, QR, layout, LPE, cloning, text (47 ops) |
+| `inkscape_vector` | trace, boolean, simplify, optimize, render, QR, layout, LPE, cloning, text (49 ops) |
 | `inkscape_analysis` | `quality`, `statistics`, `validate`, `objects`, `dimensions`, `structure` |
 | `inkscape_system` | `status`, `help`, `diagnostics`, `version`, `config`, `list_extensions`, `execute_extension` |
 | `inkscape_extension` | `list`, `describe`, `run`, `run_live` — discover and invoke installed inkex extensions |

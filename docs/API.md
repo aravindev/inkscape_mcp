@@ -41,7 +41,7 @@ Inkscape CLI.
 ## inkscape_vector
 
 Vector editing, booleans, tracing, path manipulation, optimization, layout,
-LPE, and barcode/QR generation. 47 operations — full list in
+LPE, and barcode/QR generation. 49 operations — full list in
 `InkscapeVectorOperation` (`mcp_tool_types.py`). Highlights:
 
 - **Tracing & generation:** `trace_image`, `generate_barcode_qr`, `generate_laser_dot`, `create_mesh_gradient`, `construct_svg`.
