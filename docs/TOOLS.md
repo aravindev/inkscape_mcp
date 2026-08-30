@@ -5,7 +5,7 @@ that picks the actual behavior — keeps the surface scannable for the agent.
 
 > **For the operational guide** — picking the right op, gotchas, recipes for
 > retired tools, Inkscape rendering pitfalls — see
-> [`docs/reference/mcp-workflow.md`](reference/mcp-workflow.md).
+> [`src/inkscape_mcp/reference/mcp-workflow.md`](../src/inkscape_mcp/reference/mcp-workflow.md).
 >
 > Parameter schemas: [API.md](API.md). Source of truth for operation enums:
 > `src/inkscape_mcp/mcp_tool_types.py`.
@@ -111,7 +111,7 @@ operations. Highlights:
   the agent can see the result.
 
 Full payload shapes for each live op are in
-[`docs/reference/mcp-workflow.md`](reference/mcp-workflow.md).
+[`src/inkscape_mcp/reference/mcp-workflow.md`](../src/inkscape_mcp/reference/mcp-workflow.md).
 
 ## Prompts and resources
 

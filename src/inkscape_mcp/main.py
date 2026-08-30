@@ -16,7 +16,7 @@ from typing import Any
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
-from .config import InkscapeConfig, load_config
+from .config import load_config
 from .inkscape_detector import InkscapeDetector
 from .logging_config import setup_logging
 from .mcp_tool_types import (
@@ -95,7 +95,10 @@ class InkscapeMCPServer:
         Args:
             config_path: Optional path to configuration file
         """
-        self.config = load_config(config_path) if config_path else InkscapeConfig()
+        # load_config(None) already resolves the default ~/.config/inkscape_mcp/config.yaml
+        # and layers the INKSCAPE_* env overrides on top. Short-circuiting to a bare
+        # InkscapeConfig() when no --config was passed made both permanently dead.
+        self.config = load_config(config_path)
         self.mcp = FastMCP("Inkscape MCP Server", instructions=SERVER_INSTRUCTIONS)
         self.tools = {}
         self.logger = logging.getLogger(__name__)
@@ -145,31 +148,33 @@ class InkscapeMCPServer:
             # Register portmanteau tools
             self._register_portmanteau_tools()
 
+            # loguru does not do %-style interpolation, so these must be f-strings —
+            # otherwise the arguments are dropped and the literal %s is logged.
             try:
                 register_prompts_and_resources(self.mcp)
                 logger.info("MCP prompts and resources registered")
             except Exception as e:
-                logger.warning("Failed to register prompts/resources: %s", e)
+                logger.warning(f"Failed to register prompts/resources: {e}")
 
             try:
                 from .extension_bridge import install_plugins
 
                 install_result = install_plugins()
                 if install_result.get("action") == "copied":
-                    logger.info(
-                        "Extension bridge: installed %d plugin(s); Inkscape restart required",
-                        len(install_result.get("files", [])),
-                    )
+                    count = len(install_result.get("files", []))
+                    logger.info(f"Extension bridge: installed {count} plugin(s); Inkscape restart required")
                 else:
-                    logger.info("Extension bridge: plugins up to date (v%s)", install_result.get("version"))
+                    logger.info(f"Extension bridge: plugins up to date (v{install_result.get('version')})")
             except Exception as e:
-                logger.warning("Extension bridge install failed (continuing): %s", e)
+                logger.warning(f"Extension bridge install failed (continuing): {e}")
 
             # Register Prefab UI (FastMCP 3.2 GenerativeUI)
-            if PREFAB_AVAILABLE and register_prefabs:
+            if PREFAB_AVAILABLE and register_prefabs is not None:
                 try:
-                    register_prefabs(self.mcp)
-                    logger.info("Prefab UI components registered")
+                    # Only claim registration when it actually happened — register_prefabs
+                    # returns False (rather than raising) when prefab-ui isn't installed.
+                    if register_prefabs(self.mcp):
+                        logger.info("Prefab UI components registered")
                 except Exception as e:
                     logger.warning(f"Failed to register Prefab UI: {e}")
 
@@ -195,6 +200,17 @@ class InkscapeMCPServer:
             input_path: str = "",
             output_path: str = "",
             format: str = "",
+            input_paths: list[str] | None = None,
+            output_dir: str = "",
+            quality: int = 90,
+            pdf_version: str = "",
+            pdf_page: int = 1,
+            margin: float = 0,
+            latex: bool = False,
+            ignore_filters: bool = False,
+            png_color_mode: str = "",
+            png_dithering: bool = False,
+            validate_structure: bool = True,
         ) -> dict[str, Any]:
             """INKSCAPE_FILE — Load, convert, export, and validate SVG/other files via Inkscape CLI.
 
@@ -211,9 +227,16 @@ class InkscapeMCPServer:
 
             Args:
                 operation: Must be one of the Literal values (schema-enumerated).
-                input_path: Source file; may be empty for list_formats only.
+                input_path: Source file; may be empty for list_formats/batch_convert.
                 output_path: Destination for save/convert when applicable.
-                format: Target format for convert (e.g. pdf, png).
+                format: Target format for convert/batch_convert (e.g. pdf, png).
+                input_paths: Source files for batch_convert (required for that operation).
+                output_dir: Destination directory for batch_convert (required).
+                quality: Encoder quality 1-100 for the Pillow-backed formats (jpeg/webp/avif).
+                pdf_version, margin, latex, ignore_filters, png_color_mode, png_dithering:
+                    Export tuning forwarded to Inkscape's export-* actions.
+                pdf_page: Page to read when input_path is a PDF.
+                validate_structure: Run Inkscape's query check during load.
 
             Returns:
                 Dict with success, operation, message, data, execution_time_ms, and error on failure.
@@ -227,6 +250,17 @@ class InkscapeMCPServer:
                 input_path=input_path,
                 output_path=output_path,
                 format=format,
+                input_paths=input_paths,
+                output_dir=output_dir,
+                quality=quality,
+                pdf_version=pdf_version,
+                pdf_page=pdf_page,
+                margin=margin,
+                latex=latex,
+                ignore_filters=ignore_filters,
+                png_color_mode=png_color_mode,
+                png_dithering=png_dithering,
+                validate_structure=validate_structure,
                 cli_wrapper=self.cli_wrapper,
                 config=self.config,
             )
@@ -243,6 +277,29 @@ class InkscapeMCPServer:
             operation: InkscapeVectorOperation,
             input_path: str = "",
             output_path: str = "",
+            object_id: str = "",
+            object_ids: list[str] | None = None,
+            select_all: bool = False,
+            operation_type: str = "",
+            barcode_data: str = "",
+            source_id: str = "",
+            text_id: str = "",
+            path_id: str = "",
+            output_dir: str = "",
+            units: str = "px",
+            threshold: float = 1.0,
+            offset: float = 1.0,
+            dpi: int = 96,
+            steps: int = 1,
+            rows: int = 3,
+            cols: int = 3,
+            x_shift: float = 50,
+            y_shift: float = 50,
+            rotation_step: float = 0.0,
+            scale_step: float = 1.0,
+            x: float = 300,
+            y: float = 200,
+            description: str = "",
         ) -> dict[str, Any]:
             """INKSCAPE_VECTOR — Vector editing, booleans, trace, QR/barcode, path ops, previews.
 
@@ -254,8 +311,21 @@ class InkscapeMCPServer:
 
             Args:
                 operation: Subcommand; must match InkscapeVectorOperation.
-                input_path: Primary document path (some ops may use output-only paths in kwargs).
+                input_path: Primary document path.
                 output_path: Output file when the operation writes a file.
+                object_id: Target element — measure_object, count_nodes, path_simplify,
+                    object_raise, object_lower.
+                object_ids / select_all: Selection for apply_boolean (supply one or the other).
+                operation_type: union | difference | intersection | exclusion for apply_boolean.
+                barcode_data: Payload for generate_barcode_qr (required).
+                source_id, rows, cols, x_shift, y_shift, rotation_step, scale_step: tile_clone.
+                text_id, path_id: text_on_path (both required).
+                output_dir: Destination directory for layers_to_files.
+                units: Target unit for set_document_units (px, mm, cm, in, pt, pc).
+                threshold: Simplification strength for path_simplify (1-10 passes).
+                offset: Grow (positive) or shrink (negative) amount for path_inset_outset.
+                dpi: Resolution for render_preview. steps: 90-degree turns for page_rotate.
+                x, y: Placement for generate_laser_dot. description: title for construct_svg.
 
             Returns:
                 Dict with success, message, data or structured results, execution_time_ms, error.
@@ -268,6 +338,29 @@ class InkscapeMCPServer:
                 operation=operation,
                 input_path=input_path,
                 output_path=output_path,
+                object_id=object_id,
+                object_ids=object_ids,
+                select_all=select_all,
+                operation_type=operation_type,
+                barcode_data=barcode_data,
+                source_id=source_id,
+                text_id=text_id,
+                path_id=path_id,
+                output_dir=output_dir,
+                units=units,
+                threshold=threshold,
+                offset=offset,
+                dpi=dpi,
+                steps=steps,
+                rows=rows,
+                cols=cols,
+                x_shift=x_shift,
+                y_shift=y_shift,
+                rotation_step=rotation_step,
+                scale_step=scale_step,
+                x=x,
+                y=y,
+                description=description,
                 cli_wrapper=self.cli_wrapper,
                 config=self.config,
             )
@@ -312,7 +405,13 @@ class InkscapeMCPServer:
                 openWorldHint=False,
             ),
         )
-        async def inkscape_system(operation: InkscapeSystemOperation) -> dict[str, Any]:
+        async def inkscape_system(
+            operation: InkscapeSystemOperation,
+            extension_id: str = "",
+            extension_params: dict[str, Any] | None = None,
+            input_file: str = "",
+            output_file: str = "",
+        ) -> dict[str, Any]:
             """INKSCAPE_SYSTEM — Server/Inkscape status, help, diagnostics, version, extensions.
 
             PORTMANTEAU RATIONALE: Operational and introspection calls stay in one discoverable tool.
@@ -320,8 +419,11 @@ class InkscapeMCPServer:
             Operations: status, help, diagnostics, version, config, list_extensions, execute_extension.
 
             Args:
-                operation: System subcommand (Literal). Extension execution may require extra
-                    parameters not exposed on this MCP wrapper — prefer list_extensions first.
+                operation: System subcommand (Literal).
+                extension_id: Extension to run for execute_extension (use list_extensions
+                    to discover ids). input_file is also required; output_file defaults to
+                    overwriting input_file. extension_params carries the extension's own
+                    options — call inkscape_extension(describe) for its schema.
 
             Returns:
                 Dict with success, message, data, execution_time_ms, error.
@@ -331,6 +433,10 @@ class InkscapeMCPServer:
             """
             return await inkscape_system_tool(
                 operation=operation,
+                extension_id=extension_id or None,
+                extension_params=extension_params,
+                input_file=input_file or None,
+                output_file=output_file or None,
                 cli_wrapper=self.cli_wrapper,
                 config=self.config,
             )
@@ -490,7 +596,9 @@ async def main_async():
 
     parser = argparse.ArgumentParser(description="Inkscape MCP Server")
     parser.add_argument("--config", type=str, help="Path to config file", default=None)
-    parser.add_argument("--mode", choices=["stdio", "http"], default="stdio")
+    # default=None (not "stdio") so we can tell "flag omitted" from "explicitly --mode=stdio"
+    # without string-matching sys.argv, which missed the --mode=http spelling.
+    parser.add_argument("--mode", choices=["stdio", "http"], default=None)
     parser.add_argument(
         "--port",
         type=int,
@@ -503,25 +611,41 @@ async def main_async():
     args = parser.parse_args()
 
     # Re-setup logging with arg level
-    log_level = getattr(logging, args.log_level.upper())
+    log_level = getattr(logging, args.log_level.upper(), logging.INFO)
     logging.basicConfig(level=log_level, force=True)
 
     # Bridge this CLI to transport env.
     # If MCP_TRANSPORT is already set externally (e.g. Claude Desktop config env),
     # honour it — only apply the argparser value when --mode was explicitly passed.
-    explicit_mode = "--mode" in sys.argv
-    if explicit_mode:
+    if args.mode is not None:
         os.environ["MCP_PORT"] = str(args.port)
         os.environ["MCP_TRANSPORT"] = args.mode
+        os.environ["MCP_HOST"] = args.host
     else:
         if not os.environ.get("MCP_TRANSPORT"):
             os.environ["MCP_TRANSPORT"] = "stdio"
         os.environ.setdefault("MCP_PORT", str(args.port))
+        os.environ.setdefault("MCP_HOST", args.host)
+
+    # Hand the transport layer an already-parsed namespace. Left to itself it builds a
+    # different parser (--stdio/--http/--sse/...) and re-parses sys.argv, so any flag
+    # accepted above ("--mode stdio", "--log-level DEBUG") aborted the server with
+    # "unrecognized arguments" *after* a full initialization — and SystemExit, being a
+    # BaseException, slipped straight past the `except Exception` below.
+    transport_args = argparse.Namespace(
+        stdio=(args.mode == "stdio"),
+        http=(args.mode == "http"),
+        sse=False,
+        host=args.host,
+        port=args.port,
+        path=None,
+        debug=(log_level <= logging.DEBUG),
+    )
 
     try:
         server = InkscapeMCPServer(config_path=Path(args.config) if args.config else None)
         if await server.initialize():
-            await run_server_async(server.mcp, server_name="Inkscape MCP Server")
+            await run_server_async(server.mcp, args=transport_args, server_name="Inkscape MCP Server")
         else:
             return 1
     except KeyboardInterrupt:

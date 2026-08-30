@@ -218,10 +218,29 @@ Errors:
         - Run diagnostics operation to identify connection issues
 """
 
+import asyncio
 import time
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel
+
+from ..mcp_tool_types import InkscapeSystemOperation
+
+
+def _server_version() -> str:
+    """Real package version — these used to be hardcoded and drifted three releases behind."""
+    from .. import __version__
+
+    return __version__
+
+
+def _fastmcp_version() -> str:
+    try:
+        from fastmcp import __version__ as v
+
+        return str(v)
+    except Exception:
+        return "unknown"
 
 
 class SystemResult(BaseModel):
@@ -236,7 +255,7 @@ class SystemResult(BaseModel):
 
 
 async def inkscape_system(
-    operation: Literal["status", "help", "diagnostics", "version", "config", "list_extensions", "execute_extension"],
+    operation: InkscapeSystemOperation,
     extension_id: str | None = None,
     extension_params: dict[str, Any] | None = None,
     input_file: str | None = None,
@@ -271,7 +290,7 @@ async def inkscape_system(
                 data={
                     "server": {
                         "name": "Inkscape MCP Server",
-                        "version": "1.1.0",
+                        "version": _server_version(),
                         "status": "running",
                     },
                     "inkscape": {
@@ -296,10 +315,10 @@ async def inkscape_system(
                 operation="version",
                 message="Retrieved version information",
                 data={
-                    "server": "Inkscape MCP Server v1.2.0-beta",
-                    "protocol": "FastMCP 2.14.1+",
+                    "server": f"Inkscape MCP Server v{_server_version()}",
+                    "protocol": f"FastMCP {_fastmcp_version()}",
                     "architecture": "Portmanteau Tools",
-                    "inkscape_required": "1.0+ (1.2+ recommended for Actions API)",
+                    "inkscape_required": "1.4.x (Actions API; older lines are unsupported)",
                 },
                 execution_time_ms=(time.time() - start_time) * 1000,
             ).model_dump()
@@ -317,12 +336,21 @@ async def inkscape_system(
                 from ..extension_bridge import bridge_status, needs_inkscape_restart
 
                 bridge = bridge_status()
-                bus = InkscapeDBus()
-                if bus.is_available():
-                    bridge["live"] = True
-                    bridge["needs_restart"] = needs_inkscape_restart(bus)
-                else:
+
+                # jeepney's send_and_get_reply blocks with no timeout, so probing the bus
+                # inline can wedge the whole event loop on a stalled Inkscape. Run the probe
+                # in a worker thread and give up after a beat.
+                def _probe() -> dict[str, Any]:
+                    bus = InkscapeDBus()
+                    if bus.is_available():
+                        return {"live": True, "needs_restart": needs_inkscape_restart(bus)}
+                    return {"live": False}
+
+                try:
+                    bridge.update(await asyncio.wait_for(asyncio.to_thread(_probe), timeout=5.0))
+                except TimeoutError:
                     bridge["live"] = False
+                    bridge["probe"] = "timed out after 5s"
             except Exception as exc:
                 bridge = {"error": str(exc)}
 
@@ -340,38 +368,63 @@ async def inkscape_system(
             ).model_dump()
 
         elif operation == "list_extensions":
-            # Extension system disabled - plugins directory removed
+            # Previously a stub claiming "Extension system disabled - plugins directory
+            # removed", which contradicted the fully working inkscape_extension tool.
+            from .extension import _op_list
+
+            listed = _op_list("list_extensions", "", start_time)
+            extensions = listed.get("data", {}).get("extensions", [])
             return SystemResult(
-                success=True,
+                success=listed["success"],
                 operation="list_extensions",
-                message="Extension system disabled - plugins directory removed",
+                message=listed["message"],
                 data={
-                    "extensions": [],
-                    "total_count": 0,
-                    "categories": [],
-                    "note": "Extension system temporarily disabled",
+                    "extensions": extensions,
+                    "total_count": len(extensions),
+                    "categories": sorted({e.get("category", "") for e in extensions if e.get("category")}),
                 },
                 execution_time_ms=(time.time() - start_time) * 1000,
+                error=listed.get("error", ""),
             ).model_dump()
 
         elif operation == "execute_extension":
-            # Extension system disabled - plugins directory removed
             if not extension_id:
                 return SystemResult(
                     success=False,
                     operation="execute_extension",
                     message="Extension ID is required",
+                    data={},  # required field; omitting it raised a ValidationError that
+                    # masked this message entirely
                     error="Missing extension_id parameter",
                     execution_time_ms=(time.time() - start_time) * 1000,
                 ).model_dump()
+            if not input_file:
+                return SystemResult(
+                    success=False,
+                    operation="execute_extension",
+                    message="input_file is required to execute an extension",
+                    data={"extension_id": extension_id},
+                    error="Missing input_file parameter",
+                    execution_time_ms=(time.time() - start_time) * 1000,
+                ).model_dump()
 
+            from .extension import _op_run
+
+            ran = await _op_run(
+                "execute_extension",
+                extension_id,
+                extension_params or {},
+                input_file,
+                output_file or "",
+                start_time,
+            )
             return SystemResult(
-                success=False,
+                success=ran["success"],
                 operation="execute_extension",
-                message=f"Extension system disabled - cannot execute {extension_id}",
-                error="Extension system temporarily disabled",
-                data={"note": "Extension system temporarily disabled"},
+                message=ran["message"],
+                data=ran.get("data", {}),
                 execution_time_ms=(time.time() - start_time) * 1000,
+                error=ran.get("error", ""),
             ).model_dump()
 
         elif operation == "help":

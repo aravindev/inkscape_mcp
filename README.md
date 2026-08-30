@@ -157,7 +157,7 @@ Full operation list in [`docs/TOOLS.md`](docs/TOOLS.md).
 - [docs/INSTALL.md](docs/INSTALL.md) — full install walkthrough.
 - [docs/TOOLS.md](docs/TOOLS.md) — every operation per tool.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — when things break.
-- [docs/reference/](docs/reference/) — captured Inkscape 1.4.4 `--action-list` and `--help`.
+- [src/inkscape_mcp/reference/](src/inkscape_mcp/reference/) — captured Inkscape 1.4.4 `--action-list` and `--help`; ships in the wheel and is served as `resource://inkscape/cli-actions` / `cli-help`.
 
 ## Star history
 

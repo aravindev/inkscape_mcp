@@ -153,7 +153,7 @@ Signature: `inkscape_live(operation, target="", payload="", window_id=1)`.
 
 `payload` is a JSON string when the operation needs structured arguments
 (e.g. `rasterize` takes `{"area": "x:y:w:h", "dpi": 192, "filename": "..."}`).
-Full payload shapes are in `docs/reference/mcp-workflow.md`.
+Full payload shapes are in `src/inkscape_mcp/reference/mcp-workflow.md`.
 
 ---
 

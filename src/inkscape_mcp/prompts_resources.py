@@ -79,27 +79,29 @@ Resources: resource://inkscape/capabilities, resource://inkscape/skills,
         return "Skills file not found — expected at src/inkscape_mcp/skills/SKILL.md"
 
     # ---------------------------------------------------------------------
-    # Documentation resources — exposes docs/reference/ files so agents can
-    # fetch the operational guide + Inkscape's full CLI surface without
+    # Documentation resources — exposes the bundled reference files so agents
+    # can fetch the operational guide + Inkscape's full CLI surface without
     # shelling out themselves.
     # ---------------------------------------------------------------------
 
     def _read_docs_reference(filename: str, friendly_name: str) -> str:
-        from pathlib import Path
+        # These live inside the package (like skills/) so they ship in the wheel.
+        # Resolving them relative to the repo root worked only from a git checkout:
+        # from site-packages it pointed outside the install and every one of these
+        # resources reported "not found" for PyPI users.
+        from importlib import resources
 
-        # docs/reference/ sits at the repo root, three levels up from this file
-        # (src/inkscape_mcp/prompts_resources.py → repo root).
-        candidate = Path(__file__).resolve().parents[2] / "docs" / "reference" / filename
-        if candidate.exists():
-            return candidate.read_text(encoding="utf-8")
-        return f"{friendly_name} not found — expected at {candidate}"
+        try:
+            return (resources.files("inkscape_mcp.reference") / filename).read_text(encoding="utf-8")
+        except (FileNotFoundError, ModuleNotFoundError, OSError):
+            return f"{friendly_name} not found — expected at inkscape_mcp/reference/{filename}"
 
     @mcp.resource("resource://inkscape/mcp-workflow")
     def resource_mcp_workflow() -> str:
         """Operational guide — picking the right op, gotchas, recipes, Inkscape rendering pitfalls.
 
-        Sourced from docs/reference/mcp-workflow.md. Read this first when working out
-        which MCP call covers a desired Inkscape operation."""
+        Sourced from the bundled reference/mcp-workflow.md. Read this first when working
+        out which MCP call covers a desired Inkscape operation."""
         return _read_docs_reference("mcp-workflow.md", "MCP workflow guide")
 
     @mcp.resource("resource://inkscape/cli-actions")

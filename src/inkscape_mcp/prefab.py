@@ -13,8 +13,13 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 
-def register_prefabs(mcp: FastMCP) -> None:
-    """Register Prefab UI components with the FastMCP instance."""
+def register_prefabs(mcp: FastMCP) -> bool:
+    """Register Prefab UI components with the FastMCP instance.
+
+    Returns True if components were registered, False if prefab-ui is unavailable — the
+    caller needs the distinction so it doesn't log a successful registration that never
+    happened.
+    """
 
     try:
         from fastmcp.prefab import Button, Column, Dropdown, Text, prefab
@@ -24,7 +29,7 @@ def register_prefabs(mcp: FastMCP) -> None:
         logging.getLogger(__name__).warning(
             "prefab-ui not installed — Prefab UI unavailable. Run: uv add 'prefab-ui>=0.14.0'"
         )
-        return
+        return False
 
     @prefab(mcp, tool="inkscape_system")
     def inkscape_system_prefab():
@@ -49,3 +54,5 @@ def register_prefabs(mcp: FastMCP) -> None:
                 Button(label="Run", action="submit"),
             ]
         )
+
+    return True
