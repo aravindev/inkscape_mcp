@@ -29,19 +29,32 @@ def _find_main_layer(root: etree._Element) -> etree._Element:
     return root
 
 
-def _ensure_xlink(root: etree._Element) -> None:
-    """lxml won't add the xlink namespace declaration unless an element actually uses it.
-    We declare it by writing xmlns:xlink on root via nsmap if missing."""
+def _rebuild_root_with_xlink(tree: etree._ElementTree) -> tuple[etree._ElementTree, etree._Element]:
+    """Return (tree, root) with the xlink prefix declared on the root.
+
+    lxml can't add a namespace prefix to an existing element, so the root has to be
+    rebuilt. Comments and processing instructions that sit *outside* the root are
+    siblings in the tree rather than children, so they have to be carried across
+    explicitly — the previous version dropped them (along with any DOCTYPE).
+    """
+    root = tree.getroot()
     if "xlink" in (root.nsmap or {}):
-        return
-    # Rebuild root with xlink in nsmap. lxml requires reconstruction for new namespace prefixes.
+        return tree, root
+
     new_nsmap = dict(root.nsmap)
     new_nsmap["xlink"] = XLINK_NS
     new_root = etree.Element(root.tag, attrib=root.attrib, nsmap=new_nsmap)
-    for child in root:
+    new_root.text, new_root.tail = root.text, root.tail
+    for child in list(root):
         new_root.append(child)
-    root.getparent().replace(root, new_root) if root.getparent() is not None else None
-    # If no parent, we can't replace; caller handles via tree.getroot() reassign downstream.
+
+    new_tree = etree.ElementTree(new_root)
+    # Preserve the prolog/epilog siblings (comments, PIs) around the old root.
+    for sibling in root.itersiblings(preceding=True):
+        new_root.addprevious(sibling)
+    for sibling in root.itersiblings():
+        new_root.addnext(sibling)
+    return new_tree, new_root
 
 
 def tile_clone(
@@ -86,14 +99,7 @@ def tile_clone(
             return _err("tile_clone", f"source id '{source_id}' not found", start, "NotFound")
 
         # Declare xlink on root if missing so the serialised output stays valid.
-        if "xlink" not in (root.nsmap or {}):
-            new_nsmap = dict(root.nsmap)
-            new_nsmap["xlink"] = XLINK_NS
-            new_root = etree.Element(root.tag, attrib=root.attrib, nsmap=new_nsmap)
-            for child in list(root):
-                new_root.append(child)
-            tree = etree.ElementTree(new_root)
-            root = new_root
+        tree, root = _rebuild_root_with_xlink(tree)
 
         layer = _find_main_layer(root)
 

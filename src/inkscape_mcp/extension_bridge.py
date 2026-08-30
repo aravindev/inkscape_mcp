@@ -64,7 +64,9 @@ INSTALL_DIR = _user_extensions_dir()
 VERSION_FILE = INSTALL_DIR / "VERSION"
 
 # Bump when the bundled plugins change — triggers reinstall on next MCP startup.
-PLUGINS_VERSION = "9"
+# 10: mcp_edit_xml rejects non-element XPath results instead of dying on AttributeError
+#     (which left result.json unwritten and hung the caller until its timeout).
+PLUGINS_VERSION = "10"
 
 # Used to detect whether a fresh install has been picked up by a running Inkscape.
 ECHO_ACTION = "org.inkscape.mcp.echo.noprefs"
