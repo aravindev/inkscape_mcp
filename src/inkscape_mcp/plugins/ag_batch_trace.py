@@ -18,7 +18,7 @@ class AGBatchTrace(inkex.EffectExtension):
         pars.add_argument("--input_dir", type=str, help="Directory containing bitmaps")
         pars.add_argument("--output_dir", type=str, help="Directory to save SVGs")
         pars.add_argument("--colors", type=int, default=4, help="Number of colors to quantize to")
-        pars.add_argument("--simplify", type=bool, default=True, help="Simplify paths after tracing")
+        pars.add_argument("--simplify", type=inkex.Boolean, default=True, help="Simplify paths after tracing")
 
     def effect(self):
         """Execute batch bitmap tracing."""

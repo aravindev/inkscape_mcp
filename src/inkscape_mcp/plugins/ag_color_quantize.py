@@ -20,7 +20,7 @@ class AGColorQuantize(inkex.EffectExtension):
             default="",
             help="Custom palette (hex colors separated by commas)",
         )
-        pars.add_argument("--dither", type=bool, default=False, help="Apply dithering")
+        pars.add_argument("--dither", type=inkex.Boolean, default=False, help="Apply dithering")
 
     def effect(self):
         """Quantize colors in the SVG."""

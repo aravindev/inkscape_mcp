@@ -189,12 +189,15 @@ Errors:
         - Check if operation is available in newer versions
 """
 
+import re
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from lxml import etree
 from pydantic import BaseModel
+
+from ..mcp_tool_types import InkscapeAnalysisOperation
 
 SVG_NS = "{http://www.w3.org/2000/svg}"
 INK_NS = "{http://www.inkscape.org/namespaces/inkscape}"
@@ -212,7 +215,7 @@ class AnalysisResult(BaseModel):
 
 
 async def inkscape_analysis(
-    operation: Literal["quality", "statistics", "validate", "objects", "dimensions", "structure"],
+    operation: InkscapeAnalysisOperation,
     input_path: str,
     cli_wrapper: Any = None,
     config: Any = None,
@@ -233,58 +236,7 @@ async def inkscape_analysis(
                 error="FileNotFoundError",
             ).model_dump()
 
-        if operation == "statistics":
-            # Get basic document statistics
-            try:
-                width_result = await cli_wrapper._execute_command(
-                    [
-                        str(config.inkscape_executable),
-                        "--app-id-tag=mcp",
-                        str(input_path_obj),
-                        "--query-width",
-                    ],
-                    config.process_timeout,
-                )
-                height_result = await cli_wrapper._execute_command(
-                    [
-                        str(config.inkscape_executable),
-                        "--app-id-tag=mcp",
-                        str(input_path_obj),
-                        "--query-height",
-                    ],
-                    config.process_timeout,
-                )
-
-                width = float(width_result.strip())
-                height = float(height_result.strip())
-
-                return AnalysisResult(
-                    success=True,
-                    operation="statistics",
-                    message=f"Retrieved statistics for {input_path}",
-                    data={
-                        "path": str(input_path_obj.resolve()),
-                        "file_size": input_path_obj.stat().st_size,
-                        "width": width,
-                        "height": height,
-                        "format": "svg",
-                        "num_objects": 1,  # Placeholder
-                        "num_layers": 1,  # Placeholder
-                    },
-                    execution_time_ms=(time.time() - start_time) * 1000,
-                ).model_dump()
-
-            except Exception as e:
-                return AnalysisResult(
-                    success=False,
-                    operation="statistics",
-                    message=f"Statistics retrieval failed: {e}",
-                    data={"path": str(input_path_obj)},
-                    execution_time_ms=(time.time() - start_time) * 1000,
-                    error=str(e),
-                ).model_dump()
-
-        elif operation == "validate":
+        if operation == "validate":
             # Validate SVG by attempting to load
             try:
                 await cli_wrapper._execute_command(
@@ -374,6 +326,9 @@ async def inkscape_analysis(
                 ).model_dump()
 
         elif operation == "statistics":
+            # Was unreachable: an earlier `if operation == "statistics"` branch shadowed this
+            # one and returned hardcoded num_objects/num_layers of 1 after two needless
+            # Inkscape subprocess launches.
             return _analyze_statistics(input_path_obj, start_time)
 
         elif operation == "objects":
@@ -416,6 +371,24 @@ def _local_tag(elem) -> str:
     """Strip the XML namespace for cleaner type names."""
     tag = elem.tag
     return tag.split("}", 1)[1] if "}" in tag else tag
+
+
+def _document_size(root) -> tuple[float | None, float | None]:
+    """User-space width/height, preferring viewBox over the (unit-bearing) attributes."""
+    viewbox = root.get("viewBox")
+    if viewbox:
+        parts = [p for p in re.split(r"[ ,]+", viewbox.strip()) if p]
+        if len(parts) >= 4:
+            try:
+                return float(parts[2]), float(parts[3])
+            except ValueError:
+                pass
+
+    def _num(raw: str | None) -> float | None:
+        m = re.match(r"\s*(-?\d*\.?\d+(?:[eE][-+]?\d+)?)", raw or "")
+        return float(m.group(1)) if m else None
+
+    return _num(root.get("width")), _num(root.get("height"))
 
 
 def _analyze_objects(path: Path, start: float) -> dict[str, Any]:
@@ -501,7 +474,7 @@ def _analyze_structure(path: Path, start: float) -> dict[str, Any]:
 
 
 def _analyze_statistics(path: Path, start: float) -> dict[str, Any]:
-    """File-size + object/layer counts via XML walk; cheaper than --query-all."""
+    """File-size + dimensions + object/layer counts via XML walk; cheaper than --query-all."""
     try:
         root = _parse_svg(path)
         all_elems = list(root.iter())
@@ -511,13 +484,19 @@ def _analyze_statistics(path: Path, start: float) -> dict[str, Any]:
             if _local_tag(e) in {"rect", "circle", "ellipse", "line", "polyline", "polygon", "path", "text", "image"}
         )
         layer_count = sum(1 for e in all_elems if _local_tag(e) == "g" and e.get(f"{INK_NS}groupmode") == "layer")
+        # Dimensions come from the document attributes rather than two `--query-*`
+        # subprocess launches; viewBox is the authoritative user-space extent.
+        width, height = _document_size(root)
         return AnalysisResult(
             success=True,
             operation="statistics",
-            message="Statistics collected",
+            message=f"Statistics collected: {shape_count} shape(s), {layer_count} layer(s)",
             data={
                 "path": str(path.resolve()),
                 "file_size_bytes": path.stat().st_size,
+                "format": "svg",
+                "width": width,
+                "height": height,
                 "element_count": len(all_elems),
                 "shape_count": shape_count,
                 "layer_count": layer_count,

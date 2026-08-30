@@ -15,6 +15,22 @@ BUS_NAME = "org.inkscape.Inkscape"
 APP_PATH = "/org/inkscape/Inkscape"
 WINDOW_PATH_PREFIX = "/org/inkscape/Inkscape/window"
 
+_FALSEY = frozenset({"", "0", "false", "no", "off", "none"})
+
+
+def coerce_bool(value: Any) -> bool:
+    """Interpret an action parameter as a boolean.
+
+    Action payloads arrive as strings from the MCP surface, and plain ``bool("false")`` is
+    ``True`` — so every ``b``-signature toggle was impossible to switch off (asking to
+    disable ``export-overwrite`` enabled it). Match the textual forms callers actually send.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSEY
+    return bool(value)
+
 
 class InkscapeDBus:
     """Blocking jeepney bridge to a running Inkscape 1.4.x GUI on the session bus."""
@@ -105,7 +121,7 @@ class InkscapeDBus:
         if signature == "d":
             return ("d", float(value))
         if signature == "b":
-            return ("b", bool(value))
+            return ("b", coerce_bool(value))
         # Fall back to passing the value through with the declared signature.
         return (signature, value)
 

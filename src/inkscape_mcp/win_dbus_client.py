@@ -16,6 +16,8 @@ import re
 import subprocess
 from typing import Any
 
+from .dbus_client import coerce_bool
+
 BUS_NAME = "org.inkscape.Inkscape"
 APP_PATH = "/org/inkscape/Inkscape"
 DOCUMENT_PATH_PREFIX = "/org/inkscape/Inkscape/document"
@@ -123,7 +125,7 @@ class WinInkscapeDBus:
             escaped = str(value).replace("\\", "\\\\").replace("'", "\\'")
             return f"<'{escaped}'>"
         if signature == "b":
-            return f"<{'true' if value else 'false'}>"
+            return f"<{'true' if coerce_bool(value) else 'false'}>"
         if signature in ("i", "u", "x", "t"):
             type_word = {"i": "int32", "u": "uint32", "x": "int64", "t": "uint64"}[signature]
             return f"<{type_word} {int(value)}>"

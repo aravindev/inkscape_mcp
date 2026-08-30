@@ -369,14 +369,16 @@ async def _op_insert_svg_via_inkex(
     )
 
 
-def _op_delete_selected(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
+def _op_delete_selected(bus: InkscapeDBus, operation: str, window_id: int, start: float) -> dict[str, Any]:
     # delete-selection is the explicit object-delete; `delete` is context-sensitive (text/nodes).
-    saved = _activate_with_optional_save(bus, "delete-selection", scope="app")
+    # window_id must be threaded through: the follow-up document-save is window-scoped, so
+    # defaulting it to 1 silently no-ops the save on any other window.
+    saved = _activate_with_optional_save(bus, "delete-selection", scope="app", window_id=window_id)
     return _result(
         operation,
         True,
         "activated delete-selection",
-        data={"action": "delete-selection", "saved": saved},
+        data={"action": "delete-selection", "window_id": window_id, "saved": saved},
         start=start,
     )
 
@@ -916,6 +918,19 @@ async def _op_edit_xml(
             start=start,
         )
 
+    # The extension reports its own outcome in the payload; a well-formed JSON body still
+    # means success=True at the transport level. Without this check a bad XPath came back
+    # as "affected 0 node(s)" with success=True — and we'd fire a pointless save on top.
+    if result.data.get("ok") is False:
+        return _result(
+            operation,
+            False,
+            result.data.get("error", "edit_xml failed"),
+            data={"action": action, "xpath": target_xpath, **result.data},
+            error=result.data.get("error", ""),
+            start=start,
+        )
+
     # Persist the in-memory mutation to disk so re-reads see current state.
     # Honours the same kill switch as Pattern A: INKSCAPE_MCP_AUTO_SAVE=0 to skip.
     saved = False
@@ -1120,7 +1135,7 @@ async def inkscape_live(
                 return await _op_insert_svg_via_inkex(bus, operation, payload, start)
             return _op_insert_svg(bus, operation, payload, window_id, start)
         if operation == "delete_selected":
-            return _op_delete_selected(bus, operation, start)
+            return _op_delete_selected(bus, operation, window_id, start)
         if operation == "apply_action":
             return _op_apply_action(bus, operation, target, payload, window_id, start)
         if operation == "list_actions":

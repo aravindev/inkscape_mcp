@@ -383,31 +383,31 @@ async def _op_run(
             start=start,
         )
 
-    if not stdout:
-        return _result(
-            operation,
-            False,
-            "extension produced no stdout — unexpected for an inkex Effect/Filter extension",
-            data={"argv": argv, "stderr": stderr},
-            error="empty output",
-            start=start,
-        )
-
+    # inkex suppresses stdout when the effect left the document untouched (e.g. every
+    # boolean option was disabled). That's a legitimate no-op, not a failure — carry the
+    # input through to the output so callers still get a valid file.
+    unchanged = not stdout
     try:
         out_p.parent.mkdir(parents=True, exist_ok=True)
-        out_p.write_bytes(stdout)
+        if unchanged:
+            if out_p != input_p:
+                out_p.write_bytes(input_p.read_bytes())
+        else:
+            out_p.write_bytes(stdout)
     except OSError as exc:
         return _result(operation, False, f"could not write output: {exc}", error=str(exc), start=start)
 
+    written = out_p.stat().st_size
     return _result(
         operation,
         True,
-        f"ran {ext.id} ({len(stdout)} bytes → {out_p})",
+        f"ran {ext.id} ({'no changes' if unchanged else f'{len(stdout)} bytes'} → {out_p})",
         data={
             "id": ext.id,
             "input_path": str(input_p),
             "output_path": str(out_p),
-            "bytes": len(stdout),
+            "bytes": written,
+            "unchanged": unchanged,
             "stderr": stderr,
         },
         start=start,
