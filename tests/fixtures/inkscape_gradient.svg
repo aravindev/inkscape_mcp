@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  A gradient in the shape Inkscape actually writes: the stops live in one element
+  and a second element references them via xlink:href while carrying the geometry
+  (gradientUnits="userSpaceOnUse" + x1/y1/x2/y2). The object's fill points at the
+  *referencing* id, which is therefore the id a caller naturally passes in.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="200" height="200" viewBox="0 0 200 200" version="1.1">
+  <defs>
+    <linearGradient id="stops-ramp">
+      <stop id="stop-start" offset="0" style="stop-color:#ff0000;stop-opacity:1"/>
+      <stop id="stop-end" offset="1" style="stop-color:#0000ff;stop-opacity:1"/>
+    </linearGradient>
+    <linearGradient id="applied-ramp" xlink:href="#stops-ramp"
+                    gradientUnits="userSpaceOnUse"
+                    x1="20" y1="100" x2="180" y2="100"/>
+    <radialGradient id="stops-radial">
+      <stop offset="0" style="stop-color:#00ff00;stop-opacity:1"/>
+      <stop offset="1" style="stop-color:#000000;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="applied-radial" xlink:href="#stops-radial"
+                    gradientUnits="userSpaceOnUse"
+                    cx="100" cy="100" r="80"/>
+  </defs>
+  <rect id="rect-linear" x="20" y="20" width="160" height="60" fill="url(#applied-ramp)"/>
+  <rect id="rect-radial" x="20" y="120" width="160" height="60" fill="url(#applied-radial)"/>
+</svg>
