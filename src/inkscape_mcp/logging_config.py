@@ -8,9 +8,12 @@ error handling, and multiple output formats for development and production.
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from loguru import Logger
 
 
 class StructuredLogger:
@@ -63,7 +66,7 @@ class StructuredLogger:
                 serialize=False,  # Keep as text for readability
             )
 
-    def get_logger(self, name: str) -> "logger":
+    def get_logger(self, name: str) -> "Logger":
         """
         Get a logger instance for a specific component.
 
@@ -80,7 +83,7 @@ class StructuredLogger:
 _logger_instance: StructuredLogger | None = None
 
 
-def setup_logging(log_level: str = "INFO", log_file: Path | None = None, component: str = "inkscape_mcp") -> "logger":
+def setup_logging(log_level: str = "INFO", log_file: Path | None = None, component: str = "inkscape_mcp") -> "Logger":
     """
     Setup global logging configuration.
 
@@ -100,7 +103,7 @@ def setup_logging(log_level: str = "INFO", log_file: Path | None = None, compone
     return _logger_instance.get_logger(component)
 
 
-def get_logger(component: str = "inkscape_mcp") -> "logger":
+def get_logger(component: str = "inkscape_mcp") -> "Logger":
     """
     Get logger for a component.
 
@@ -112,11 +115,11 @@ def get_logger(component: str = "inkscape_mcp") -> "logger":
     """
     if _logger_instance is None:
         setup_logging()
-
+    assert _logger_instance is not None  # noqa: S101 — set by setup_logging above
     return _logger_instance.get_logger(component)
 
 
-def log_operation_start(operation: str, **kwargs) -> dict[str, Any]:
+def log_operation_start(operation: str, **kwargs: Any) -> dict[str, Any]:
     """
     Log the start of an operation with structured data.
 

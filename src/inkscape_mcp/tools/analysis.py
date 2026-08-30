@@ -341,7 +341,9 @@ async def inkscape_analysis(
             return _analyze_quality(input_path_obj, start_time)
 
         else:
-            return AnalysisResult(
+            # Defensive: unreachable for a well-typed caller, but the tools are also
+            # invoked directly (tests, other tools) where `operation` is just a str.
+            return AnalysisResult(  # type: ignore[unreachable]
                 success=False,
                 operation=operation,
                 message=f"Operation '{operation}' not yet implemented",
@@ -361,19 +363,19 @@ async def inkscape_analysis(
         ).model_dump()
 
 
-def _parse_svg(path: Path):
+def _parse_svg(path: Path) -> etree._Element:
     """Parse SVG and return root, plus a {tag-stripped: list of elements} index."""
     tree = etree.parse(str(path))
     return tree.getroot()
 
 
-def _local_tag(elem) -> str:
+def _local_tag(elem: etree._Element) -> str:
     """Strip the XML namespace for cleaner type names."""
-    tag = elem.tag
+    tag = str(elem.tag)
     return tag.split("}", 1)[1] if "}" in tag else tag
 
 
-def _document_size(root) -> tuple[float | None, float | None]:
+def _document_size(root: etree._Element) -> tuple[float | None, float | None]:
     """User-space width/height, preferring viewBox over the (unit-bearing) attributes."""
     viewbox = root.get("viewBox")
     if viewbox:
@@ -439,8 +441,8 @@ def _analyze_structure(path: Path, start: float) -> dict[str, Any]:
     try:
         root = _parse_svg(path)
 
-        def walk(el):
-            children = []
+        def walk(el: etree._Element) -> list[dict[str, Any]]:
+            children: list[dict[str, Any]] = []
             for c in el:
                 t = _local_tag(c)
                 if t == "g":

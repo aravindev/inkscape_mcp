@@ -475,7 +475,9 @@ async def inkscape_system(
             ).model_dump()
 
         else:
-            return SystemResult(
+            # Defensive: unreachable for a well-typed caller, but the tools are also
+            # invoked directly (tests, other tools) where `operation` is just a str.
+            return SystemResult(  # type: ignore[unreachable]
                 success=False,
                 operation=operation,
                 message=f"Unknown operation: {operation}",

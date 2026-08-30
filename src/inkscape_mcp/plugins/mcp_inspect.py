@@ -20,6 +20,7 @@ import json
 import os
 import traceback
 from pathlib import Path
+from typing import Any
 
 import inkex
 
@@ -114,8 +115,16 @@ def _bbox_dict(elem) -> dict:
     # inkex BoundingBox exposes .left/.top/.width/.height; some versions
     # use .x/.y. Try both.
     try:
-        x = float(getattr(bb, "left", getattr(bb, "x", None)))
-        y = float(getattr(bb, "top", getattr(bb, "y", None)))
+        raw_x = getattr(bb, "left", None)
+        raw_y = getattr(bb, "top", None)
+        if raw_x is None:
+            raw_x = getattr(bb, "x", None)
+        if raw_y is None:
+            raw_y = getattr(bb, "y", None)
+        if raw_x is None or raw_y is None:
+            return {}
+        x = float(raw_x)
+        y = float(raw_y)
         w = float(bb.width)
         h = float(bb.height)
     except (TypeError, ValueError, AttributeError):
@@ -450,7 +459,8 @@ def _inspect_element(svg, root, spec) -> dict:
     }
 
 
-_DISPATCH = {
+# Handlers differ in arity (element takes the spec too), so the values are Any.
+_DISPATCH: dict[str, Any] = {
     "selection": _inspect_selection,
     "layers": _inspect_layers,
     "defs": _inspect_defs,

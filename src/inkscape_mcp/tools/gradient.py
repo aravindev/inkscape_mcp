@@ -21,7 +21,7 @@ class GradientResult(BaseModel):
     error: str = ""
 
 
-def _parse_offset(raw: str) -> float:
+def _parse_offset(raw: str | None) -> float:
     """Normalise Inkscape's "0", "0%", "0.0" offsets to a 0-1 float."""
     if raw is None:
         return 0.0

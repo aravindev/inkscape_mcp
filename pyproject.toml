@@ -80,6 +80,26 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 
+# Third-party packages that ship no type information. `lxml-stubs` would cover lxml, but
+# it models the C API loosely enough to produce more false positives than it prevents on
+# the element-mutating code here, so lxml is treated as untyped too.
+[[tool.mypy.overrides]]
+module = [
+    "jeepney.*",
+    "lxml.*",
+    "yaml",
+    "inkex.*",
+    "fastmcp.prefab",
+    "pillow_avif",
+]
+ignore_missing_imports = true
+
+# The bundled inkex plugins run inside Inkscape's own interpreter against an untyped
+# inkex API; annotating them buys nothing and `self.svg` resolves to Any regardless.
+[[tool.mypy.overrides]]
+module = ["inkscape_mcp.plugins.*"]
+disallow_untyped_defs = false
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"

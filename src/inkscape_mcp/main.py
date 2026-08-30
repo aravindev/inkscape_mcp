@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +42,7 @@ from .tools import inkscape_vector as inkscape_vector_tool
 from .transport import run_server_async
 
 # Import Prefab UI
+register_prefabs: Callable[[FastMCP], bool] | None
 try:
     from .prefab import register_prefabs
 
@@ -100,7 +102,7 @@ class InkscapeMCPServer:
         # InkscapeConfig() when no --config was passed made both permanently dead.
         self.config = load_config(config_path)
         self.mcp = FastMCP("Inkscape MCP Server", instructions=SERVER_INSTRUCTIONS)
-        self.tools = {}
+        self.tools: dict[str, Any] = {}
         self.logger = logging.getLogger(__name__)
         self.cli_wrapper: Any | None = None
 
@@ -583,7 +585,7 @@ class InkscapeMCPServer:
         }
 
 
-async def main_async():
+async def main_async() -> int:
     """Async entry point."""
     # Configure basic logging first
     logging.basicConfig(
@@ -657,7 +659,7 @@ async def main_async():
     return 0
 
 
-def main():
+def main() -> int:
     """Main entry point."""
     try:
         return asyncio.run(main_async())
