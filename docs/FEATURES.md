@@ -52,7 +52,7 @@ single-purpose tools.
 | Tool | Operations | Purpose |
 |------|-----------:|---------|
 | `inkscape_file`      |  7 | Load, save, convert, info, validate, list formats, batch convert. |
-| `inkscape_vector`    | 47 | Boolean, path, trace, optimize, render, barcode/QR, layout, LPE, cloning, text. |
+| `inkscape_vector`    | 49 | Boolean, path, trace, optimize, render, barcode/QR, layout, LPE, cloning, text. |
 | `inkscape_analysis`  |  6 | Quality, statistics, validate, objects, dimensions, structure. |
 | `inkscape_system`    |  7 | Status, help, diagnostics, version, config, list/execute extensions. |
 | `inkscape_extension` |  4 | Discover and invoke installed inkex extensions (headless or live). |
