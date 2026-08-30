@@ -330,11 +330,26 @@ Errors:
         - Check if operation is available in newer Inkscape versions
 """
 
+import re
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
+from lxml import etree
 from pydantic import BaseModel
+
+from ..mcp_tool_types import InkscapeVectorOperation
+
+SVG_NS = "http://www.w3.org/2000/svg"
+SVG = f"{{{SVG_NS}}}"
+INK = "{http://www.inkscape.org/namespaces/inkscape}"
+
+# `select-all:all` includes groups AND layers, so a per-object action ends up applied to the
+# enclosing layer <g> and silently no-ops. The bare form defaults to 'no-groups' — every
+# object other than groups and layers — which is what these operations actually want.
+_SELECT_OBJECTS = "select-all"
+
+_SHAPE_TAGS = frozenset({"rect", "circle", "ellipse", "line", "polyline", "polygon", "path", "text", "image", "use"})
 
 
 class VectorOperationResult(BaseModel):
@@ -348,34 +363,14 @@ class VectorOperationResult(BaseModel):
     error: str = ""
 
 
+def _local_tag(elem: Any) -> str:
+    """Strip the XML namespace for cleaner type names."""
+    tag = str(elem.tag)
+    return tag.split("}", 1)[1] if "}" in tag else tag
+
+
 async def inkscape_vector(
-    operation: Literal[
-        "trace_image",
-        "generate_barcode_qr",
-        "create_mesh_gradient",
-        "text_to_path",
-        "construct_svg",
-        "apply_boolean",
-        "path_inset_outset",
-        "path_simplify",
-        "path_clean",
-        "path_combine",
-        "path_break_apart",
-        "object_to_path",
-        "optimize_svg",
-        "scour_svg",
-        "measure_object",
-        "query_document",
-        "count_nodes",
-        "export_dxf",
-        "layers_to_files",
-        "fit_canvas_to_drawing",
-        "render_preview",
-        "generate_laser_dot",
-        "object_raise",
-        "object_lower",
-        "set_document_units",
-    ],
+    operation: InkscapeVectorOperation,
     input_path: str = "",
     output_path: str = "",
     object_id: str = "",
@@ -445,7 +440,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-to-path"],
+                actions=[_SELECT_OBJECTS, "object-to-path"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -467,7 +462,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "fit-canvas-to-selection"],
+                actions=[_SELECT_OBJECTS, "fit-canvas-to-selection"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -477,7 +472,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "path-combine"],
+                actions=[_SELECT_OBJECTS, "path-combine"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -488,7 +483,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "org.inkscape.meshes.path-to-mesh.noprefs"],
+                actions=[_SELECT_OBJECTS, "org.inkscape.meshes.path-to-mesh.noprefs"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -496,15 +491,43 @@ async def inkscape_vector(
         elif operation == "construct_svg":
             return _construct_svg(output_path, kwargs.get("description", ""))
 
-        elif operation == "path_inset_outset":
-            # Positive offset → outset, negative → inset. Default outset.
-            offset = kwargs.get("offset", 1.0)
-            action = "path-outset" if offset >= 0 else "path-inset"
+        elif operation == "path_break_apart":
             return await _simple_action_op(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", action],
+                actions=[_SELECT_OBJECTS, "path-break-apart"],
+                cli_wrapper=cli_wrapper,
+                config=config,
+            )
+
+        elif operation in ("optimize_svg", "scour_svg"):
+            # Both map to Inkscape's plain-SVG export, which strips the inkscape:/sodipodi:
+            # namespaced editor state. `scour_svg` additionally vacuums unreferenced defs.
+            return await _optimize_svg(
+                operation,
+                input_path,
+                output_path,
+                vacuum_defs=(operation == "scour_svg"),
+                cli_wrapper=cli_wrapper,
+                config=config,
+            )
+
+        elif operation == "export_dxf":
+            return await _export_dxf(input_path, output_path, config)
+
+        elif operation == "layers_to_files":
+            return await _layers_to_files(input_path, kwargs.get("output_dir", "") or output_path, cli_wrapper, config)
+
+        elif operation == "path_inset_outset":
+            # `path-inset` / `path-outset` don't exist in 1.4. `transform-grow:<n>` is the
+            # action form: positive grows (outset), negative shrinks (inset).
+            offset = float(kwargs.get("offset", 1.0))
+            return await _simple_action_op(
+                operation,
+                input_path,
+                output_path,
+                actions=[_SELECT_OBJECTS, f"transform-grow:{offset:g}"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -514,7 +537,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "path-division"],
+                actions=[_SELECT_OBJECTS, "path-division"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -524,7 +547,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "path-cut"],
+                actions=[_SELECT_OBJECTS, "path-cut"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -534,7 +557,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "path-split"],
+                actions=[_SELECT_OBJECTS, "path-split"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -544,7 +567,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "path-fill-between-paths"],
+                actions=[_SELECT_OBJECTS, "path-fill-between-paths"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -554,7 +577,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-stroke-to-path"],
+                actions=[_SELECT_OBJECTS, "object-stroke-to-path"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -564,7 +587,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-flip-horizontal"],
+                actions=[_SELECT_OBJECTS, "object-flip-horizontal"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -574,7 +597,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-flip-vertical"],
+                actions=[_SELECT_OBJECTS, "object-flip-vertical"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -584,7 +607,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-rotate-90-cw"],
+                actions=[_SELECT_OBJECTS, "object-rotate-90-cw"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -594,7 +617,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-rotate-90-ccw"],
+                actions=[_SELECT_OBJECTS, "object-rotate-90-ccw"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -604,7 +627,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-align"],
+                actions=[_SELECT_OBJECTS, "object-align"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -614,7 +637,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-distribute"],
+                actions=[_SELECT_OBJECTS, "object-distribute"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -624,7 +647,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "selection-ungroup"],
+                actions=[_SELECT_OBJECTS, "selection-ungroup"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -634,7 +657,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "clone"],
+                actions=[_SELECT_OBJECTS, "clone"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -644,7 +667,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "clone-unlink"],
+                actions=[_SELECT_OBJECTS, "clone-unlink"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -654,7 +677,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-to-marker"],
+                actions=[_SELECT_OBJECTS, "object-to-marker"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -664,7 +687,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-to-pattern"],
+                actions=[_SELECT_OBJECTS, "object-to-pattern"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -705,7 +728,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "page-fit-to-selection"],
+                actions=[_SELECT_OBJECTS, "page-fit-to-selection"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -727,7 +750,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "object-add-corners-lpe"],
+                actions=[_SELECT_OBJECTS, "object-add-corners-lpe"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -737,7 +760,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "remove-path-effect"],
+                actions=[_SELECT_OBJECTS, "remove-path-effect"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -747,7 +770,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "paste-path-effect"],
+                actions=[_SELECT_OBJECTS, "paste-path-effect"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -757,7 +780,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=["select-all:all", "clone-link-lpe"],
+                actions=[_SELECT_OBJECTS, "clone-link-lpe"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -786,13 +809,17 @@ async def inkscape_vector(
 
 async def _trace_image(input_path: str, output_path: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
     """Trace bitmap image to vector paths using potrace."""
+    start = time.time()
     try:
+        # `selection-create-bitmap-copies` / `selection-trace` / `file-save-as` do not exist
+        # in 1.4; the trace verb is `object-trace`. The input file is already passed as the
+        # positional argument, so `file-open:` is redundant.
         actions = [
-            "file-open:" + input_path,
-            "selection-create-bitmap-copies",
-            "selection-trace",
-            "file-save-as:" + output_path,
-            "file-close",
+            _SELECT_OBJECTS,
+            "object-trace",
+            f"export-filename:{output_path}",
+            "export-type:svg",
+            "export-do",
         ]
 
         await cli_wrapper._execute_actions(
@@ -807,7 +834,7 @@ async def _trace_image(input_path: str, output_path: str, cli_wrapper: Any, conf
             operation="trace_image",
             message=f"Traced bitmap {input_path} to vector {output_path}",
             data={"input_path": input_path, "output_path": output_path, "method": "potrace"},
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -816,33 +843,88 @@ async def _trace_image(input_path: str, output_path: str, cli_wrapper: Any, conf
             operation="trace_image",
             message=f"Bitmap tracing failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
 
-async def _generate_barcode_qr(barcode_data: str, output_path: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
-    """Generate QR code or barcode."""
-    try:
-        # Create basic SVG with QR-like pattern (placeholder implementation)
-        svg_template = """<?xml version="1.0" encoding="UTF-8"?>
-<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg">
-  <rect width="200" height="200" fill="white"/>
-  <text x="100" y="100" text-anchor="middle" font-family="monospace" font-size="12">
-    {barcode_data}
-  </text>
-</svg>"""
-        svg_content = svg_template.format(barcode_data=barcode_data)
+_QR_EXTENSION_ID = "org.inkscape.qr_code"
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(svg_content)
+_EMPTY_CANVAS_SVG = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<svg xmlns="http://www.w3.org/2000/svg" '
+    'xmlns:xlink="http://www.w3.org/1999/xlink" '
+    'xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" '
+    'xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" '
+    'viewBox="0 0 200 200" width="200" height="200"/>'
+)
+
+
+async def _generate_barcode_qr(barcode_data: str, output_path: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
+    """Render a real QR code via Inkscape's bundled ``org.inkscape.qr_code`` extension.
+
+    The previous implementation wrote the payload into a ``<text>`` element — a label, not a
+    scannable code — and reported success. It also interpolated the payload into an XML
+    template without escaping, so any ``&`` or ``<`` produced an unparseable file.
+    """
+    start = time.time()
+    try:
+        if not barcode_data:
+            return VectorOperationResult(
+                success=False,
+                operation="generate_barcode_qr",
+                message="barcode_data is required to generate a QR code",
+                data={},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="ValueError",
+            ).model_dump()
+        if not output_path:
+            return VectorOperationResult(
+                success=False,
+                operation="generate_barcode_qr",
+                message="output_path is required",
+                data={},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="ValueError",
+            ).model_dump()
+
+        from .extension import _op_run
+
+        # The QR extension is a generator: it needs a canvas to draw onto, not our input.
+        out_p = Path(output_path).resolve()
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        out_p.write_text(_EMPTY_CANVAS_SVG, encoding="utf-8")
+
+        res = await _op_run(
+            "generate_barcode_qr",
+            _QR_EXTENSION_ID,
+            {"text": barcode_data},
+            str(out_p),
+            str(out_p),
+            start,
+        )
+        if not res["success"]:
+            out_p.unlink(missing_ok=True)
+            return VectorOperationResult(
+                success=False,
+                operation="generate_barcode_qr",
+                message=f"QR generation failed: {res['message']}",
+                data=res.get("data", {}),
+                execution_time_ms=(time.time() - start) * 1000,
+                error=res.get("error", "extension failed"),
+            ).model_dump()
 
         return VectorOperationResult(
             success=True,
             operation="generate_barcode_qr",
-            message=f"Generated barcode/QR for: {barcode_data}",
-            data={"output_path": output_path, "data": barcode_data, "type": "qr"},
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            message=f"Generated QR code for: {barcode_data}",
+            data={
+                "output_path": str(out_p),
+                "data": barcode_data,
+                "type": "qr",
+                "extension": _QR_EXTENSION_ID,
+            },
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -851,13 +933,14 @@ async def _generate_barcode_qr(barcode_data: str, output_path: str, cli_wrapper:
             operation="generate_barcode_qr",
             message=f"Barcode generation failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
 
 async def _generate_laser_dot(output_path: str, x: float, y: float, cli_wrapper: Any, config: Any) -> dict[str, Any]:
     """Generate animated laser pointer dot."""
+    start = time.time()
     try:
         svg_content = f"""<?xml version="1.0" encoding="UTF-8"?>
 <svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
@@ -901,7 +984,7 @@ async def _generate_laser_dot(output_path: str, x: float, y: float, cli_wrapper:
                 "position": {"x": x, "y": y},
                 "description": "Animated green laser pointer dot",
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -910,13 +993,14 @@ async def _generate_laser_dot(output_path: str, x: float, y: float, cli_wrapper:
             operation="generate_laser_dot",
             message=f"Laser dot generation failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
 
 async def _measure_object(input_path: str, object_id: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
     """Measure object dimensions."""
+    start = time.time()
     try:
         # Use Inkscape's query functions
         x_result = await cli_wrapper._execute_command(
@@ -973,7 +1057,7 @@ async def _measure_object(input_path: str, object_id: str, cli_wrapper: Any, con
                 "height": height,
                 "bbox": [x, y, x + width, y + height],
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -982,13 +1066,14 @@ async def _measure_object(input_path: str, object_id: str, cli_wrapper: Any, con
             operation="measure_object",
             message=f"Object measurement failed: {e}",
             data={"object_id": object_id},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
 
 async def _query_document(input_path: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
     """Query document information."""
+    start = time.time()
     try:
         width_result = await cli_wrapper._execute_command(
             [str(config.inkscape_executable), "--app-id-tag=mcp", input_path, "--query-width"],
@@ -1002,20 +1087,26 @@ async def _query_document(input_path: str, cli_wrapper: Any, config: Any) -> dic
         width = float(width_result.strip())
         height = float(height_result.strip())
 
-        # Count objects (simplified - would need more complex parsing)
-        object_count = 1  # Placeholder
+        # Real counts from the XML rather than the previous hardcoded 1/1.
+        root = etree.parse(input_path).getroot()
+        elems = list(root.iter())
+        num_objects = sum(1 for e in elems if _local_tag(e) in _SHAPE_TAGS)
+        num_layers = sum(1 for e in elems if _local_tag(e) == "g" and e.get(f"{INK}groupmode") == "layer")
+        num_groups = sum(1 for e in elems if _local_tag(e) == "g") - num_layers
 
         return VectorOperationResult(
             success=True,
             operation="query_document",
-            message=f"Queried document {input_path}",
+            message=f"Queried document {input_path}: {num_objects} object(s), {num_layers} layer(s)",
             data={
                 "width": width,
                 "height": height,
-                "num_objects": object_count,
-                "num_layers": 1,  # Placeholder
+                "num_objects": num_objects,
+                "num_layers": num_layers,
+                "num_groups": num_groups,
+                "element_count": len(elems),
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1024,27 +1115,69 @@ async def _query_document(input_path: str, cli_wrapper: Any, config: Any) -> dic
             operation="query_document",
             message=f"Document query failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
 
-async def _count_nodes(input_path: str, object_id: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
-    """Count nodes in a path."""
-    try:
-        # This is a simplified implementation - real implementation would need to parse SVG
-        # For now, return a placeholder
-        node_count = 42  # Placeholder
+# One SVG path node per drawing command. Excludes Z/z, which closes back onto the
+# subpath's existing start node rather than adding a new one.
+_PATH_CMD_RE = re.compile(r"[MmLlHhVvCcSsQqTtAa]")
 
+
+def _count_path_nodes(d: str) -> int:
+    """Count nodes in a path `d` string, accounting for implicit repeated commands.
+
+    `M 0 0 L 1 1 2 2` is three nodes, not two: after an explicit command letter, further
+    coordinate tuples repeat it implicitly (subsequent `M` pairs repeat as `L`).
+    """
+    if not d:
+        return 0
+    nodes = 0
+    for cmd, args in re.findall(r"([MmLlHhVvCcSsQqTtAaZz])([^MmLlHhVvCcSsQqTtAaZz]*)", d):
+        if cmd in "Zz":
+            continue
+        per_node = {"H": 1, "V": 1, "C": 6, "S": 4, "Q": 4, "T": 2, "A": 7}.get(cmd.upper(), 2)
+        count = len(re.findall(r"-?\d*\.?\d+(?:[eE][-+]?\d+)?", args))
+        nodes += max(1, count // per_node)
+    return nodes
+
+
+async def _count_nodes(input_path: str, object_id: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
+    """Count bezier nodes across the document, or in one path when object_id is given."""
+    start = time.time()
+    try:
+        root = etree.parse(input_path).getroot()
+        per_path: dict[str, int] = {}
+        for el in root.iter(f"{SVG}path"):
+            el_id = el.get("id", "")
+            if object_id and el_id != object_id:
+                continue
+            per_path[el_id] = _count_path_nodes(el.get("d", ""))
+
+        if object_id and not per_path:
+            return VectorOperationResult(
+                success=False,
+                operation="count_nodes",
+                message=f"no <path> with id {object_id!r} in {input_path}",
+                data={"object_id": object_id},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="NotFound",
+            ).model_dump()
+
+        total = sum(per_path.values())
+        scope = f"object {object_id}" if object_id else f"{len(per_path)} path(s)"
         return VectorOperationResult(
             success=True,
             operation="count_nodes",
-            message=f"Counted nodes for object {object_id}",
+            message=f"Counted {total} node(s) across {scope}",
             data={
                 "object_id": object_id,
-                "node_count": node_count,
+                "node_count": total,
+                "paths": per_path,
+                "path_count": len(per_path),
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1053,7 +1186,7 @@ async def _count_nodes(input_path: str, object_id: str, cli_wrapper: Any, config
             operation="count_nodes",
             message=f"Node counting failed: {e}",
             data={"object_id": object_id},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
@@ -1067,10 +1200,16 @@ async def _path_simplify(
     config: Any,
 ) -> dict[str, Any]:
     """Simplify path by reducing nodes."""
+    start = time.time()
     try:
+        # `path-simplify` takes no argument in 1.4 — the aggressiveness comes from Inkscape's
+        # simplification-threshold preference. We approximate `threshold` by applying the
+        # action repeatedly, which is how Inkscape's own repeated-Ctrl+L behaves.
+        passes = max(1, min(10, round(threshold)))
+        select = f"select-by-id:{object_id}" if object_id else _SELECT_OBJECTS
         actions = [
-            f"select-by-id:{object_id}",
-            f"selection-simplify:{threshold}",
+            select,
+            *(["path-simplify"] * passes),
             f"export-filename:{output_path}",
             "export-do",
         ]
@@ -1092,7 +1231,7 @@ async def _path_simplify(
                 "object_id": object_id,
                 "threshold": threshold,
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1101,17 +1240,19 @@ async def _path_simplify(
             operation="path_simplify",
             message=f"Path simplification failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
 
 async def _path_clean(input_path: str, output_path: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
     """Clean SVG by removing unnecessary elements."""
+    start = time.time()
     try:
+        # `file-vacuum-defs` / `file-cleanup` do not exist in 1.4. `export-plain-svg` is the
+        # supported cleanup path: it drops Inkscape/sodipodi-namespaced cruft on export.
         actions = [
-            "file-vacuum-defs",
-            "file-cleanup",
+            "export-plain-svg",
             f"export-filename:{output_path}",
             "export-do",
         ]
@@ -1131,7 +1272,7 @@ async def _path_clean(input_path: str, output_path: str, cli_wrapper: Any, confi
                 "input_path": input_path,
                 "output_path": output_path,
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1140,7 +1281,7 @@ async def _path_clean(input_path: str, output_path: str, cli_wrapper: Any, confi
             operation="path_clean",
             message=f"Path cleaning failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
@@ -1222,6 +1363,7 @@ async def _simple_action_op(
 
 async def _render_preview(input_path: str, output_path: str, dpi: int, cli_wrapper: Any, config: Any) -> dict[str, Any]:
     """Render PNG preview of SVG."""
+    start = time.time()
     try:
         actions = [f"export-filename:{output_path}", f"export-dpi:{dpi}", "export-do"]
 
@@ -1242,7 +1384,7 @@ async def _render_preview(input_path: str, output_path: str, dpi: int, cli_wrapp
                 "dpi": dpi,
                 "format": "png",
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1251,7 +1393,7 @@ async def _render_preview(input_path: str, output_path: str, dpi: int, cli_wrapp
             operation="render_preview",
             message=f"Preview rendering failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
@@ -1265,11 +1407,12 @@ async def _apply_boolean(
     cli_wrapper: Any = None,
     config: Any = None,
 ) -> dict[str, Any]:
-    """Apply boolean operations with proper action chaining - FIXED STATEFUL LOGIC."""
+    """Apply boolean operations with a select → modify → export action chain."""
+    start = time.time()
     try:
         # CRITICAL: Build proper action chain - Select → Modify → Persist
         if select_all:
-            select_action = "select-all"
+            select_action = _SELECT_OBJECTS
         elif object_ids:
             select_action = f"select-by-id:{','.join(object_ids)}"
         else:
@@ -1278,16 +1421,17 @@ async def _apply_boolean(
                 operation="apply_boolean",
                 message="Must provide either object_ids or select_all=true for boolean operations",
                 data={},
-                execution_time_ms=0,
+                execution_time_ms=(time.time() - start) * 1000,
                 error="ValueError",
             ).model_dump()
 
-        # Map operation types to Inkscape actions
+        # Inkscape 1.4 names these path-*, not selection-* (the latter don't exist and are
+        # silently skipped, leaving an unmodified export that still reports success).
         operation_map = {
-            "union": "selection-union",
-            "difference": "selection-difference",
-            "intersection": "selection-intersection",
-            "exclusion": "selection-exclusion",
+            "union": "path-union",
+            "difference": "path-difference",
+            "intersection": "path-intersection",
+            "exclusion": "path-exclusion",
         }
 
         if boolean_type not in operation_map:
@@ -1296,14 +1440,14 @@ async def _apply_boolean(
                 operation="apply_boolean",
                 message=f"Unknown boolean operation: {boolean_type}",
                 data={},
-                execution_time_ms=0,
+                execution_time_ms=(time.time() - start) * 1000,
                 error="ValueError",
             ).model_dump()
 
         operation_action = operation_map[boolean_type]
 
-        # MANDATORY: Complete action chain with export for persistence
-        actions = f"{select_action};{operation_action};export-filename:{output_path};export-do"
+        # Complete action chain with export for persistence.
+        actions = [select_action, operation_action, f"export-filename:{output_path}", "export-do"]
 
         await cli_wrapper._execute_actions(
             input_path=input_path,
@@ -1324,7 +1468,7 @@ async def _apply_boolean(
                 "object_ids": object_ids or ["all"],
                 "action_chain": actions,  # For debugging/transparency
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1333,7 +1477,7 @@ async def _apply_boolean(
             operation="apply_boolean",
             message=f"Boolean operation failed: {e}",
             data={},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
@@ -1342,8 +1486,14 @@ async def _object_raise(
     input_path: str, output_path: str, object_id: str, cli_wrapper: Any, config: Any
 ) -> dict[str, Any]:
     """Raise object in Z-order (move up)."""
+    start = time.time()
     try:
-        actions = f"select-by-id:{object_id};selection-raise;export-filename:{output_path};export-do"
+        actions = [
+            f"select-by-id:{object_id}",
+            "selection-raise",
+            f"export-filename:{output_path}",
+            "export-do",
+        ]
 
         await cli_wrapper._execute_actions(
             input_path=input_path,
@@ -1361,7 +1511,7 @@ async def _object_raise(
                 "output_path": output_path,
                 "object_id": object_id,
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1370,7 +1520,7 @@ async def _object_raise(
             operation="object_raise",
             message=f"Object raise failed: {e}",
             data={"object_id": object_id},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
@@ -1379,8 +1529,14 @@ async def _object_lower(
     input_path: str, output_path: str, object_id: str, cli_wrapper: Any, config: Any
 ) -> dict[str, Any]:
     """Lower object in Z-order (move down)."""
+    start = time.time()
     try:
-        actions = f"select-by-id:{object_id};selection-lower;export-filename:{output_path};export-do"
+        actions = [
+            f"select-by-id:{object_id}",
+            "selection-lower",
+            f"export-filename:{output_path}",
+            "export-do",
+        ]
 
         await cli_wrapper._execute_actions(
             input_path=input_path,
@@ -1398,7 +1554,7 @@ async def _object_lower(
                 "output_path": output_path,
                 "object_id": object_id,
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1407,7 +1563,7 @@ async def _object_lower(
             operation="object_lower",
             message=f"Object lower failed: {e}",
             data={"object_id": object_id},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
 
@@ -1415,21 +1571,81 @@ async def _object_lower(
 async def _set_document_units(
     input_path: str, output_path: str, units: str, cli_wrapper: Any, config: Any
 ) -> dict[str, Any]:
-    """Set document units (px, mm, in, etc.) to normalize workspace."""
+    """Set the document's display units by rewriting width/height, preserving the viewBox.
+
+    Previously a no-op that reported success. Rewriting width/height with a unit suffix
+    while leaving viewBox alone is the SVG-correct way to change display units without
+    moving any geometry: user-space coordinates stay put, only the physical size changes.
+    """
+    start = time.time()
+    _VALID_UNITS = {"px", "mm", "cm", "in", "pt", "pc"}
     try:
-        # This would typically use document properties or preferences
-        # For now, we'll document the units in metadata
+        if units not in _VALID_UNITS:
+            return VectorOperationResult(
+                success=False,
+                operation="set_document_units",
+                message=f"unsupported unit {units!r}; valid: {sorted(_VALID_UNITS)}",
+                data={"requested_units": units},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="ValueError",
+            ).model_dump()
+        if not output_path:
+            return VectorOperationResult(
+                success=False,
+                operation="set_document_units",
+                message="output_path is required",
+                data={},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="ValueError",
+            ).model_dump()
+
+        tree = etree.parse(input_path)
+        root = tree.getroot()
+
+        viewbox = root.get("viewBox")
+        if not viewbox:
+            # Without a viewBox, width/height *are* the user-space extent; synthesise one
+            # first so changing the unit suffix doesn't rescale the drawing.
+            w_num = _strip_unit(root.get("width", "")) or 0.0
+            h_num = _strip_unit(root.get("height", "")) or 0.0
+            if not (w_num and h_num):
+                return VectorOperationResult(
+                    success=False,
+                    operation="set_document_units",
+                    message="document has neither a viewBox nor numeric width/height",
+                    data={"requested_units": units},
+                    execution_time_ms=(time.time() - start) * 1000,
+                    error="InvalidState",
+                ).model_dump()
+            root.set("viewBox", f"0 0 {w_num:g} {h_num:g}")
+            viewbox = root.get("viewBox")
+
+        vb_parts = [float(v) for v in re.split(r"[ ,]+", str(viewbox).strip()) if v]
+        vb_w, vb_h = (vb_parts[2], vb_parts[3]) if len(vb_parts) >= 4 else (0.0, 0.0)
+
+        previous = {"width": root.get("width"), "height": root.get("height")}
+        root.set("width", f"{vb_w:g}{units}")
+        root.set("height", f"{vb_h:g}{units}")
+        root.set(f"{INK}document-units", units)
+
+        from ._svg_io import write_tree
+
+        write_tree(tree, output_path)
+
         return VectorOperationResult(
             success=True,
             operation="set_document_units",
-            message=f"Document units normalization requested for {units}",
+            message=f"Set document units to {units} ({vb_w:g}x{vb_h:g}{units})",
             data={
                 "input_path": input_path,
                 "output_path": output_path,
                 "requested_units": units,
-                "note": "Units normalization ensures consistent coordinate systems",
+                "width": f"{vb_w:g}{units}",
+                "height": f"{vb_h:g}{units}",
+                "viewBox": viewbox,
+                "previous": previous,
             },
-            execution_time_ms=(time.time() - time.time()) * 1000,
+            execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
     except Exception as e:
@@ -1438,6 +1654,233 @@ async def _set_document_units(
             operation="set_document_units",
             message=f"Document units setting failed: {e}",
             data={"requested_units": units},
-            execution_time_ms=0,
+            execution_time_ms=(time.time() - start) * 1000,
+            error=str(e),
+        ).model_dump()
+
+
+def _strip_unit(raw: str) -> float | None:
+    """Parse the numeric part of an SVG length like '210mm' → 210.0."""
+    m = re.match(r"\s*(-?\d*\.?\d+(?:[eE][-+]?\d+)?)", raw or "")
+    return float(m.group(1)) if m else None
+
+
+async def _optimize_svg(
+    operation: str,
+    input_path: str,
+    output_path: str,
+    *,
+    vacuum_defs: bool,
+    cli_wrapper: Any,
+    config: Any,
+) -> dict[str, Any]:
+    """Strip editor state via Inkscape's plain-SVG export; optionally drop unused defs.
+
+    Inkscape 1.4 has no `file-vacuum-defs` action, so the unreferenced-defs sweep is done
+    here in lxml after the export.
+    """
+    start = time.time()
+    if not output_path:
+        return VectorOperationResult(
+            success=False,
+            operation=operation,
+            message="output_path is required",
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
+            error="ValueError",
+        ).model_dump()
+    try:
+        size_before = Path(input_path).stat().st_size
+        await cli_wrapper._execute_actions(
+            input_path=input_path,
+            actions=["export-plain-svg", f"export-filename:{output_path}", "export-type:svg", "export-do"],
+            output_path=output_path,
+            timeout=config.process_timeout,
+        )
+
+        removed = 0
+        if vacuum_defs:
+            removed = _vacuum_unused_defs(output_path)
+
+        size_after = Path(output_path).stat().st_size
+        return VectorOperationResult(
+            success=True,
+            operation=operation,
+            message=(
+                f"Optimized {input_path} → {output_path} "
+                f"({size_before} → {size_after} bytes, {removed} unused def(s) removed)"
+            ),
+            data={
+                "input_path": input_path,
+                "output_path": output_path,
+                "bytes_before": size_before,
+                "bytes_after": size_after,
+                "unused_defs_removed": removed,
+            },
+            execution_time_ms=(time.time() - start) * 1000,
+        ).model_dump()
+    except Exception as e:
+        return VectorOperationResult(
+            success=False,
+            operation=operation,
+            message=f"{operation} failed: {e}",
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
+            error=str(e),
+        ).model_dump()
+
+
+def _vacuum_unused_defs(path: str) -> int:
+    """Delete <defs> children whose id is never referenced as url(#id), #id or href="#id"."""
+    tree = etree.parse(path)
+    root = tree.getroot()
+    body = etree.tostring(root, encoding="unicode")
+    removed = 0
+    for defs in list(root.iter(f"{SVG}defs")):
+        for child in list(defs):
+            cid = child.get("id")
+            if not cid:
+                continue
+            # Count references outside the element's own serialisation.
+            own = etree.tostring(child, encoding="unicode")
+            rest = body.replace(own, "", 1)
+            if f"url(#{cid})" in rest or f'href="#{cid}"' in rest or f"href='#{cid}'" in rest:
+                continue
+            defs.remove(child)
+            removed += 1
+    if removed:
+        from ._svg_io import write_tree
+
+        write_tree(tree, path)
+    return removed
+
+
+# Inkscape's DXF R14 outline exporter. Ships with Inkscape; invoked as an output extension
+# because `--export-type` only accepts [svg,png,ps,eps,pdf,emf,wmf,xaml] in 1.4.
+_DXF_EXTENSION_ID = "org.ekips.output.dxf_outlines"
+
+
+async def _export_dxf(input_path: str, output_path: str, config: Any) -> dict[str, Any]:
+    """Export to DXF via Inkscape's bundled dxf_outlines output extension."""
+    start = time.time()
+    if not output_path:
+        return VectorOperationResult(
+            success=False,
+            operation="export_dxf",
+            message="output_path is required",
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
+            error="ValueError",
+        ).model_dump()
+    try:
+        from .extension import _op_run
+
+        res = await _op_run("export_dxf", _DXF_EXTENSION_ID, {}, str(Path(input_path).resolve()), output_path, start)
+        if not res["success"]:
+            return VectorOperationResult(
+                success=False,
+                operation="export_dxf",
+                message=f"DXF export failed: {res['message']}",
+                data=res.get("data", {}),
+                execution_time_ms=(time.time() - start) * 1000,
+                error=res.get("error", "extension failed"),
+            ).model_dump()
+        return VectorOperationResult(
+            success=True,
+            operation="export_dxf",
+            message=f"Exported {input_path} to DXF at {output_path}",
+            data={
+                "input_path": input_path,
+                "output_path": output_path,
+                "bytes": Path(output_path).stat().st_size,
+                "extension": _DXF_EXTENSION_ID,
+            },
+            execution_time_ms=(time.time() - start) * 1000,
+        ).model_dump()
+    except Exception as e:
+        return VectorOperationResult(
+            success=False,
+            operation="export_dxf",
+            message=f"DXF export failed: {e}",
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
+            error=str(e),
+        ).model_dump()
+
+
+async def _layers_to_files(input_path: str, output_dir: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
+    """Export each inkscape:groupmode="layer" group to its own PNG."""
+    start = time.time()
+    if not output_dir:
+        return VectorOperationResult(
+            success=False,
+            operation="layers_to_files",
+            message="output_dir (or output_path) is required",
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
+            error="ValueError",
+        ).model_dump()
+    try:
+        root = etree.parse(input_path).getroot()
+        layers = [el for el in root.iter(f"{SVG}g") if el.get(f"{INK}groupmode") == "layer" and el.get("id")]
+        if not layers:
+            return VectorOperationResult(
+                success=False,
+                operation="layers_to_files",
+                message=f"no inkscape layers found in {input_path}",
+                data={"input_path": input_path},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="NotFound",
+            ).model_dump()
+
+        out_dir = Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        written: list[dict[str, Any]] = []
+        for layer in layers:
+            layer_id = str(layer.get("id"))
+            label = layer.get(f"{INK}label") or layer_id
+            safe = re.sub(r"[^A-Za-z0-9._-]+", "_", label).strip("_") or layer_id
+            dest = out_dir / f"{safe}.png"
+            try:
+                await cli_wrapper._execute_actions(
+                    input_path=input_path,
+                    actions=[
+                        f"export-id:{layer_id}",
+                        "export-id-only:true",
+                        f"export-filename:{dest}",
+                        "export-type:png",
+                        "export-do",
+                    ],
+                    output_path=str(dest),
+                    timeout=config.process_timeout,
+                )
+                written.append({"layer_id": layer_id, "label": label, "path": str(dest), "success": True})
+            except Exception as exc:
+                written.append(
+                    {
+                        "layer_id": layer_id,
+                        "label": label,
+                        "path": str(dest),
+                        "success": False,
+                        "error": str(exc),
+                    }
+                )
+
+        ok = sum(1 for w in written if w["success"])
+        return VectorOperationResult(
+            success=ok == len(layers),
+            operation="layers_to_files",
+            message=f"Exported {ok}/{len(layers)} layer(s) to {out_dir}",
+            data={"input_path": input_path, "output_dir": str(out_dir), "layers": written},
+            execution_time_ms=(time.time() - start) * 1000,
+            error="" if ok == len(layers) else "partial export",
+        ).model_dump()
+    except Exception as e:
+        return VectorOperationResult(
+            success=False,
+            operation="layers_to_files",
+            message=f"layers_to_files failed: {e}",
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
             error=str(e),
         ).model_dump()
