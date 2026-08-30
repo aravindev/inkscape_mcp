@@ -115,11 +115,41 @@ class McpEditXml(inkex.EffectExtension):
             _write_result({"ok": False, "error": f"bad xpath {xpath!r}: {exc}"})
             return
 
+        # An XPath can legitimately evaluate to something other than a node-set —
+        # `//@id` yields strings, `count(...)` a float. Those have no .append/.getparent,
+        # and AttributeError isn't in the mutation handler below, so the exception escaped
+        # effect(), result.json was never written, and the caller sat out the full 15s
+        # timeout instead of getting an error.
+        if not isinstance(matches, list):
+            _write_result(
+                {
+                    "ok": False,
+                    "error": (
+                        f"xpath {xpath!r} evaluated to {type(matches).__name__}, not elements — "
+                        f"edit_xml needs an element node-set"
+                    ),
+                }
+            )
+            return
+
         if not matches:
             _write_result(
                 {
                     "ok": False,
                     "error": f"xpath matched no nodes: {xpath!r}",
+                }
+            )
+            return
+
+        non_elements = [m for m in matches if not isinstance(m, etree._Element)]
+        if non_elements:
+            _write_result(
+                {
+                    "ok": False,
+                    "error": (
+                        f"xpath {xpath!r} matched {len(non_elements)} non-element result(s) "
+                        f"(e.g. {type(non_elements[0]).__name__}) — edit_xml only mutates elements"
+                    ),
                 }
             )
             return

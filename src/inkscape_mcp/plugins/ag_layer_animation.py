@@ -45,48 +45,18 @@ class AGLayerAnimation(inkex.EffectExtension):
         return layers
 
     def _create_keyframes(self, layers, duration, easing, loop):
-        """Create CSS keyframes from layers."""
+        """Create CSS keyframes from layers — one @keyframes per layer, each referenced
+        by that layer's own rule.
+
+        Previously every layer's ``animation:`` pointed at a single shared
+        ``ag_layer_anim``, whose keyframes just faded everything out, while the per-layer
+        ``@keyframes ag_layer_anim_<id>`` blocks this builds were never referenced by
+        anything — so the generated animation could not work.
+        """
         css_rules = []
         num_frames = len(layers)
+        iteration = "infinite" if loop else "1"
 
-        for i, layer in enumerate(layers):
-            layer_id = layer.get("id", f"layer_{i}")
-            start_percent = (i / num_frames) * 100
-            end_percent = ((i + 1) / num_frames) * 100
-
-            # Hide all layers initially
-            if i == 0:
-                css_rules.append(
-                    f"""
-                #{layer_id} {{
-                    opacity: 1;
-                    animation: ag_layer_anim {duration}s {easing} {"infinite" if loop else "1"};
-                }}
-                """.strip()
-                )
-            else:
-                css_rules.append(
-                    f"""
-                #{layer_id} {{
-                    opacity: 0;
-                    animation: ag_layer_anim {duration}s {easing} {"infinite" if loop else "1"};
-                }}
-                """.strip()
-                )
-
-        # Create the keyframe animation
-        keyframe_rules = []
-        for i in range(num_frames):
-            percent = (i / num_frames) * 100
-            keyframe_rules.append(
-                f"""
-            {percent:.1f}% {{
-                opacity: {"1" if i == 0 else "0"};
-            }}
-            """.strip()
-            )
-
-        # Add keyframes for each layer
         for i, layer in enumerate(layers):
             layer_id = layer.get("id", f"layer_{i}")
             start_percent = (i / num_frames) * 100
@@ -94,12 +64,22 @@ class AGLayerAnimation(inkex.EffectExtension):
 
             css_rules.append(
                 f"""
+                #{layer_id} {{
+                    opacity: {1 if i == 0 else 0};
+                    animation: ag_layer_anim_{layer_id} {duration}s {easing} {iteration};
+                }}
+                """.strip()
+            )
+
+            # Visible only for this layer's slice of the timeline.
+            css_rules.append(
+                f"""
             @keyframes ag_layer_anim_{layer_id} {{
                 0%, {start_percent:.1f}% {{
                     opacity: 0;
                     display: none;
                 }}
-                {start_percent + 0.1:.1f}%, {end_percent - 0.1:.1f}% {{
+                {min(start_percent + 0.1, end_percent):.1f}%, {max(end_percent - 0.1, start_percent):.1f}% {{
                     opacity: 1;
                     display: inline;
                 }}
@@ -110,16 +90,6 @@ class AGLayerAnimation(inkex.EffectExtension):
             }}
             """.strip()
             )
-
-        # Main animation keyframes
-        css_rules.insert(
-            0,
-            f"""
-        @keyframes ag_layer_anim {{
-            {"".join(keyframe_rules)}
-        }}
-        """.strip(),
-        )
 
         return css_rules
 

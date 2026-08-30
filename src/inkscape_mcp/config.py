@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,11 @@ class InkscapeConfig(BaseModel):
     """
     Configuration model for Inkscape MCP Server.
     """
+
+    # Without this, the env-override assignments in load_config() bypass every Field
+    # bound and validator — process_timeout accepted 999 despite le=300, and assigning
+    # temp_directory never ran the mkdir/writable check.
+    model_config = ConfigDict(validate_assignment=True)
 
     # Inkscape Configuration
     inkscape_executable: str | None = Field(
@@ -234,8 +239,8 @@ class InkscapeConfig(BaseModel):
         path = Path(config_path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convert to dict and remove None values
-        config_dict = self.dict(exclude_none=True)
+        # model_dump, not the pydantic-v1 .dict() shim (deprecated, emits a warning).
+        config_dict = self.model_dump(exclude_none=True)
 
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -349,7 +354,16 @@ def load_config(config_path: str | Path | None = None) -> InkscapeConfig:
         file_value=cfg.process_timeout,
         fallback=30,
     )
-    cfg.process_timeout = int(timeout_resolved.value) if timeout_resolved.value is not None else 30
+    # A malformed or out-of-range INKSCAPE_MCP_TIMEOUT used to kill startup with an
+    # uncaught ValueError (or, before validate_assignment, be accepted silently).
+    # Warn and keep the default instead — a bad env var shouldn't take the server down.
+    try:
+        cfg.process_timeout = int(timeout_resolved.value) if timeout_resolved.value is not None else 30
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            f"Ignoring invalid INKSCAPE_MCP_TIMEOUT={timeout_resolved.value!r} ({exc}); keeping {cfg.process_timeout}s"
+        )
+        timeout_resolved = Resolved(cfg.process_timeout, ConfigSource.DEFAULT, detail="invalid override ignored")
     sources["process_timeout"] = timeout_resolved
 
     object.__setattr__(cfg, "_sources", sources)
