@@ -7,7 +7,7 @@ Renders directly in Claude Desktop / supporting clients.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -32,7 +32,7 @@ def register_prefabs(mcp: FastMCP) -> bool:
         return False
 
     @prefab(mcp, tool="inkscape_system")
-    def inkscape_system_prefab():
+    def inkscape_system_prefab() -> Any:
         """Quick status panel for inkscape_system."""
         return Column(
             children=[

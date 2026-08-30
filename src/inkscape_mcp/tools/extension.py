@@ -453,7 +453,7 @@ def _extract_extension_output(output_xml: str, wrapper_id: str) -> str:
     wrapper.set(f"{{{INKSCAPE_NS}}}label", "MCP extension output")
     for child in list(output_tree):
         wrapper.append(child)
-    return etree.tostring(wrapper, encoding="unicode")
+    return str(etree.tostring(wrapper, encoding="unicode"))
 
 
 _WRAPPER_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.\-]{0,63}$")

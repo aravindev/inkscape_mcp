@@ -379,7 +379,7 @@ async def inkscape_vector(
     operation_type: str = "",
     cli_wrapper: Any = None,
     config: Any = None,
-    **kwargs,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Inkscape vector operations portmanteau tool."""
     start_time = time.time()
@@ -1320,7 +1320,7 @@ async def _simple_action_op(
     operation: str,
     input_path: str,
     output_path: str,
-    actions: list,
+    actions: list[str],
     cli_wrapper: Any,
     config: Any,
 ) -> dict[str, Any]:

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class InkscapeCliWrapper:
     Minimal Inkscape CLI wrapper for essential vector graphics operations.
     """
 
-    def __init__(self, config):
+    def __init__(self, config: Any) -> None:
         """
         Initialize wrapper with config.
         """
@@ -227,7 +228,7 @@ class InkscapeCliWrapper:
         # (`"a;b"` -> `a;;;b`). Inkscape then rejects every character, exits 0 anyway, and
         # the export silently comes out unmodified. Callers pass this in as `Any`, so
         # neither ruff nor mypy can catch it — fail loudly instead.
-        if isinstance(actions, str):
+        if isinstance(actions, str):  # type: ignore[unreachable]
             raise TypeError(f"actions must be a list of action strings, got str: {actions!r}")
 
         cmd_args = self._base_cmd()

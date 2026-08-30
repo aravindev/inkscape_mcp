@@ -51,7 +51,7 @@ class InkscapeDBus:
                 pass
             self._conn = None
 
-    def _send(self, msg):
+    def _send(self, msg: Any) -> Any:
         # Reconnect once on a broken pipe; otherwise propagate. Raise on D-Bus errors.
         try:
             conn = self._connect()

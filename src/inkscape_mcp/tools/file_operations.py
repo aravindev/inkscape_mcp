@@ -200,19 +200,20 @@ async def _convert_via_pillow(
             timeout=config.process_timeout,
         )
         with Image.open(tmp_png) as img:
+            out: Image.Image = img
             if pil_format == "JPEG":
                 # JPEG has no alpha channel.
-                img = img.convert("RGB")
-                img.save(output_path, format="JPEG", quality=quality, optimize=True)
+                out = img.convert("RGB")
+                out.save(output_path, format="JPEG", quality=quality, optimize=True)
             elif pil_format == "WEBP":
                 # Preserve alpha if present.
                 if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert("RGBA" if "A" in img.mode else "RGB")
-                img.save(output_path, format="WEBP", quality=quality)
+                    out = img.convert("RGBA" if "A" in img.mode else "RGB")
+                out.save(output_path, format="WEBP", quality=quality)
             else:  # AVIF
                 if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert("RGBA" if "A" in img.mode else "RGB")
-                img.save(output_path, format="AVIF", quality=quality)
+                    out = img.convert("RGBA" if "A" in img.mode else "RGB")
+                out.save(output_path, format="AVIF", quality=quality)
     finally:
         try:
             Path(tmp_png).unlink()
@@ -616,7 +617,9 @@ async def inkscape_file(
             ).model_dump()
 
         else:
-            return FileOperationResult(
+            # Defensive: unreachable for a well-typed caller, but the tools are also
+            # invoked directly (tests, other tools) where `operation` is just a str.
+            return FileOperationResult(  # type: ignore[unreachable]
                 success=False,
                 operation=operation,
                 message=f"Unknown operation: {operation}",

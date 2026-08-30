@@ -27,8 +27,10 @@ def _stage_windows(svg_xml: str) -> None:
     import ctypes
     from ctypes import wintypes
 
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # WinDLL/get_last_error only exist on Windows; this whole function is guarded by a
+    # platform check at the call site, but mypy type-checks it on every platform.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
 
     user32.RegisterClipboardFormatW.argtypes = [wintypes.LPCWSTR]
     user32.RegisterClipboardFormatW.restype = wintypes.UINT
@@ -47,7 +49,7 @@ def _stage_windows(svg_xml: str) -> None:
 
     fmt = user32.RegisterClipboardFormatW(INKSCAPE_SVG_MIME)
     if not fmt:
-        raise RuntimeError(f"RegisterClipboardFormatW failed (err={ctypes.get_last_error()})")
+        raise RuntimeError(f"RegisterClipboardFormatW failed (err={ctypes.get_last_error()})")  # type: ignore[attr-defined]
 
     data = svg_xml.encode("utf-8") + b"\x00"
     h_global = kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
@@ -60,12 +62,12 @@ def _stage_windows(svg_xml: str) -> None:
     kernel32.GlobalUnlock(h_global)
 
     if not user32.OpenClipboard(None):
-        raise RuntimeError(f"OpenClipboard failed (err={ctypes.get_last_error()})")
+        raise RuntimeError(f"OpenClipboard failed (err={ctypes.get_last_error()})")  # type: ignore[attr-defined]
     try:
         user32.EmptyClipboard()
         # Ownership of h_global passes to the clipboard on success.
         if not user32.SetClipboardData(fmt, h_global):
-            raise RuntimeError(f"SetClipboardData failed (err={ctypes.get_last_error()})")
+            raise RuntimeError(f"SetClipboardData failed (err={ctypes.get_last_error()})")  # type: ignore[attr-defined]
     finally:
         user32.CloseClipboard()
 
@@ -205,4 +207,4 @@ def normalize_fragment_to_viewbox(
             new_root.append(child)
         root = new_root
 
-    return etree.tostring(root, xml_declaration=False, encoding="unicode")
+    return str(etree.tostring(root, xml_declaration=False, encoding="unicode"))

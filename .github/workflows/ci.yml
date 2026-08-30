@@ -55,5 +55,10 @@ jobs:
       - name: Ruff format check
         run: uv run ruff format --check .
 
+      # Catches advertised-vs-implemented drift: mypy flagged the operation Literal
+      # mismatch and the shadowed analysis branch before either was noticed by hand.
+      - name: Mypy
+        run: uv run mypy src/
+
       - name: Pytest
         run: uv run pytest tests/ -m "not network" -q --tb=short --ignore=tests/test_inkscape_live.py
