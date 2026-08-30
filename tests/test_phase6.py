@@ -5,8 +5,8 @@ verify the dispatch + spec shape on the MCP side."""
 
 from __future__ import annotations
 
+import asyncio
 import json
-import subprocess
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -160,27 +160,40 @@ async def test_execute_inkex_ok_false_includes_traceback(mock_invoke):
 
 @pytest.fixture
 def fake_export(monkeypatch, tmp_path):
-    """Stub _export_document so we don't touch real Inkscape; fake subprocess.run
-    so we can assert the CLI argv and pretend a PNG was written."""
-    monkeypatch.setattr(live, "_export_document", lambda b, p: Path(p).write_text("<svg/>"))
+    """Stub the document export so we don't touch real Inkscape, and fake the async
+    subprocess so we can assert the CLI argv and pretend a PNG was written.
 
-    calls = {"argv": None, "output_path": None}
+    Rasterize runs on the request path, so it uses asyncio.create_subprocess_exec rather
+    than a blocking subprocess.run — the stub has to match that shape.
+    """
 
-    def fake_run(argv, **kwargs):
-        calls["argv"] = argv
-        # The last arg is the input file; find --export-filename and write a
-        # tiny "PNG" so the existence check passes.
-        for a in argv:
-            if a.startswith("--export-filename="):
-                out = Path(a.split("=", 1)[1])
-                out.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 128)
-                calls["output_path"] = out
-        completed = MagicMock()
-        completed.returncode = 0
-        completed.stderr = b""
-        return completed
+    async def fake_export_async(b, p):
+        Path(p).write_text("<svg/>")
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(live, "_export_document_async", fake_export_async)
+
+    calls = {"argv": None, "output_path": None, "returncode": 0, "stderr": b""}
+
+    async def fake_exec(*argv, **kwargs):
+        calls["argv"] = list(argv)
+        if calls["returncode"] == 0:
+            # Find --export-filename and write a tiny "PNG" so the existence check passes.
+            for a in argv:
+                if a.startswith("--export-filename="):
+                    out = Path(a.split("=", 1)[1])
+                    out.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 128)
+                    calls["output_path"] = out
+
+        proc = MagicMock()
+        proc.returncode = calls["returncode"]
+
+        async def communicate():
+            return b"", calls["stderr"]
+
+        proc.communicate = communicate
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     return calls
 
 
@@ -190,14 +203,14 @@ def _config_stub(tmp_path):
     return cfg
 
 
-def test_rasterize_full_canvas_default(fake_export, tmp_path, monkeypatch):
+async def test_rasterize_full_canvas_default(fake_export, tmp_path, monkeypatch):
     # Direct scratch dir to tmp so we don't litter the user's cache.
     monkeypatch.setattr(live, "_SCRATCH_DIR", tmp_path)
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
     bus = MagicMock()
     cli = MagicMock()
     cfg = _config_stub(tmp_path)
-    res = live._op_rasterize(bus, "rasterize", "", "", cli, cfg, time.perf_counter())
+    res = await live._op_rasterize(bus, "rasterize", "", "", cli, cfg, time.perf_counter())
     assert res["success"] is True, res
     argv = fake_export["argv"]
     assert "/usr/bin/inkscape" in argv[0]
@@ -208,13 +221,13 @@ def test_rasterize_full_canvas_default(fake_export, tmp_path, monkeypatch):
     assert res["data"]["bytes"] > 0
 
 
-def test_rasterize_with_target_id_emits_export_id_only(fake_export, tmp_path, monkeypatch):
+async def test_rasterize_with_target_id_emits_export_id_only(fake_export, tmp_path, monkeypatch):
     monkeypatch.setattr(live, "_SCRATCH_DIR", tmp_path)
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
     bus = MagicMock()
     cli = MagicMock()
     cfg = _config_stub(tmp_path)
-    res = live._op_rasterize(bus, "rasterize", "my-elem", "", cli, cfg, time.perf_counter())
+    res = await live._op_rasterize(bus, "rasterize", "my-elem", "", cli, cfg, time.perf_counter())
     assert res["success"] is True
     argv = fake_export["argv"]
     assert "--export-id=my-elem" in argv
@@ -222,13 +235,13 @@ def test_rasterize_with_target_id_emits_export_id_only(fake_export, tmp_path, mo
     assert res["data"]["target"] == "my-elem"
 
 
-def test_rasterize_area_and_dpi(fake_export, tmp_path, monkeypatch):
+async def test_rasterize_area_and_dpi(fake_export, tmp_path, monkeypatch):
     monkeypatch.setattr(live, "_SCRATCH_DIR", tmp_path)
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
     bus = MagicMock()
     cli = MagicMock()
     cfg = _config_stub(tmp_path)
-    res = live._op_rasterize(
+    res = await live._op_rasterize(
         bus,
         "rasterize",
         "",
@@ -243,12 +256,12 @@ def test_rasterize_area_and_dpi(fake_export, tmp_path, monkeypatch):
     assert any(a.startswith("--export-dpi=192") for a in argv)
 
 
-def test_rasterize_rejects_bad_area_format(fake_export, tmp_path, monkeypatch):
+async def test_rasterize_rejects_bad_area_format(fake_export, tmp_path, monkeypatch):
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
     bus = MagicMock()
     cli = MagicMock()
     cfg = _config_stub(tmp_path)
-    res = live._op_rasterize(
+    res = await live._op_rasterize(
         bus,
         "rasterize",
         "",
@@ -261,12 +274,12 @@ def test_rasterize_rejects_bad_area_format(fake_export, tmp_path, monkeypatch):
     assert "area must be" in res["message"]
 
 
-def test_rasterize_rejects_bad_dpi(fake_export, tmp_path, monkeypatch):
+async def test_rasterize_rejects_bad_dpi(fake_export, tmp_path, monkeypatch):
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
     bus = MagicMock()
     cli = MagicMock()
     cfg = _config_stub(tmp_path)
-    res = live._op_rasterize(
+    res = await live._op_rasterize(
         bus,
         "rasterize",
         "",
@@ -279,12 +292,12 @@ def test_rasterize_rejects_bad_dpi(fake_export, tmp_path, monkeypatch):
     assert "dpi" in res["message"]
 
 
-def test_rasterize_rejects_relative_filename(fake_export, tmp_path, monkeypatch):
+async def test_rasterize_rejects_relative_filename(fake_export, tmp_path, monkeypatch):
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
     bus = MagicMock()
     cli = MagicMock()
     cfg = _config_stub(tmp_path)
-    res = live._op_rasterize(
+    res = await live._op_rasterize(
         bus,
         "rasterize",
         "",
@@ -297,29 +310,23 @@ def test_rasterize_rejects_relative_filename(fake_export, tmp_path, monkeypatch)
     assert "absolute" in res["message"]
 
 
-def test_rasterize_missing_cli_wrapper_fails(monkeypatch):
+async def test_rasterize_missing_cli_wrapper_fails(monkeypatch):
     bus = MagicMock()
-    res = live._op_rasterize(bus, "rasterize", "", "", None, None, time.perf_counter())
+    res = await live._op_rasterize(bus, "rasterize", "", "", None, None, time.perf_counter())
     assert res["success"] is False
     assert "cli_wrapper" in res["message"] or "dependencies" in res["error"].lower()
 
 
-def test_rasterize_subprocess_failure_propagates(monkeypatch, tmp_path):
+async def test_rasterize_subprocess_failure_propagates(fake_export, monkeypatch, tmp_path):
     monkeypatch.setattr(live, "_SCRATCH_DIR", tmp_path)
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
-    monkeypatch.setattr(live, "_export_document", lambda b, p: Path(p).write_text("<svg/>"))
+    fake_export["returncode"] = 1
+    fake_export["stderr"] = b"export failed: bad input"
 
-    def fake_run(argv, **kwargs):
-        completed = MagicMock()
-        completed.returncode = 1
-        completed.stderr = b"export failed: bad input"
-        return completed
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
     bus = MagicMock()
     cli = MagicMock()
     cfg = _config_stub(tmp_path)
-    res = live._op_rasterize(bus, "rasterize", "", "", cli, cfg, time.perf_counter())
+    res = await live._op_rasterize(bus, "rasterize", "", "", cli, cfg, time.perf_counter())
     assert res["success"] is False
     assert "rc=1" in res["message"]
     assert "bad input" in res["message"]
