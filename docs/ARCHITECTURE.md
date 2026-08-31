@@ -24,7 +24,7 @@
 
 - **Live document control:** `inkscape_live` talks to a running Inkscape instance over the D-Bus session bus.
 - **Inkex helpers:** `extension_bridge.py` installs the server's own inkex plugins (`plugins/`) into `~/.config/inkscape/extensions/inkscape_mcp/` on first boot; Inkscape only scans the extensions dir at startup, so a restart is required after install.
-- **Clipboard staging:** SVG fragments are inserted into the live canvas through `xclip` (X11) or `wl-clipboard` (Wayland), auto-detected.
+- **Clipboard staging:** SVG fragments are inserted into the live canvas through `wl-clipboard` (native Wayland) or `xclip` (X11, and as the XWayland fallback when `wl-copy` is missing), auto-detected.
 
 ### Extension system (`tools/extension.py`, `plugins/`)
 

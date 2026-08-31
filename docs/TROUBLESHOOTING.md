@@ -9,8 +9,10 @@ Tested with Inkscape 1.4.4 on Ubuntu 24.04.
 `inkscape_system(operation="diagnostics")` reports `inkscape_available: false`.
 
 - Confirm with `inkscape --version` on the same `$PATH` as the MCP server process.
-- Override with `INKSCAPE_BIN=/path/to/inkscape` in the server env.
-- Inkscape 1.0+ is required; 1.2+ for the Actions API; live D-Bus features assume 1.4.x.
+- Override with `INKSCAPE_BIN=/path/to/inkscape` in the server env. When set, it wins —
+  `$PATH` auto-detection only runs if nothing pins the binary. Check which one won with
+  the `config_sources` block of `inkscape_system(operation="diagnostics")`.
+- Inkscape 1.4.x is the supported line; older releases are not.
 
 ### `uv sync` fails building pycairo / pygobject
 
@@ -74,7 +76,8 @@ Some export and trace operations need extra packages:
 ### Clipboard insert (`insert_svg`) fails
 
 - X11: `xclip` must be on PATH.
-- Wayland: `wl-clipboard` must be on PATH.
+- Wayland: `wl-clipboard` is preferred, but `xclip` also works — Inkscape runs as an
+  XWayland client, so the server falls back to it when `wl-copy` is absent.
 - The server auto-detects; if both are missing the operation surfaces a clear error.
 
 ## Extensions
@@ -102,7 +105,7 @@ The first thing to do for any failure is:
 inkscape_system(operation="diagnostics")
 ```
 
-It reports Inkscape reachability, config provenance (which value came from CLI / env / config file / default), and the D-Bus bridge state.
+It reports Inkscape reachability, config provenance under `config_sources` (whether each value came from a CLI flag, env var, config file, `$PATH` auto-detection, or the built-in default), and the D-Bus bridge state.
 
 Set `INKSCAPE_MCP_LOG_LEVEL=DEBUG` for verbose logs to stderr.
 

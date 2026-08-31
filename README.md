@@ -47,7 +47,9 @@ sudo apt update
 sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev \
 pkg-config python3-dev xclip
 # xclip stages SVG fragments for clipboard-based insert into the canvas.
-# On Wayland substitute wl-clipboard for xclip — clipboard ops auto-detect.
+# Clipboard ops auto-detect the backend. On Wayland (the Ubuntu 24.04 default)
+# wl-clipboard is preferred if installed; otherwise xclip is used, which works
+# because Inkscape runs as an XWayland client. Either package is sufficient.
 
 # 2. Register with Claude Code (uvx fetches inkscape-mcp from PyPI on first run)
 claude mcp add inkscape_mcp -s user -- uvx inkscape_mcp
@@ -102,7 +104,7 @@ The Claude Code entry the install command above creates looks like:
 }
 ```
 
-Pin a non-default Inkscape with `INKSCAPE_BIN=/path/to/inkscape` in the server env. Inspect from the agent via `inkscape_system(operation="diagnostics")` — it reports which value came from which source (env var, config file, default).
+Pin a non-default Inkscape with `INKSCAPE_BIN=/path/to/inkscape` in the server env; the server only falls back to searching `$PATH` when nothing pins it. Inspect from the agent via `inkscape_system(operation="diagnostics")` — its `config_sources` block reports each tracked setting's effective value alongside where it came from (`env_var`, `config_file`, `cli_flag`, `auto_detected` or `default`).
 
 ## Try asking your agent to…
 
@@ -137,12 +139,12 @@ Pin a non-default Inkscape with `INKSCAPE_BIN=/path/to/inkscape` in the server e
 - "Swap the whole palette to a warmer earth-tone scheme"
 - "Add a 3-stop gradient to the rect with id `hero`"
 
-The agent picks the right tool. It can drive 1,073 of Inkscape's actions over D-Bus, fall back to headless CLI when the GUI isn't running, and run inkex extensions for things D-Bus doesn't cover.
+The agent picks the right tool. It can drive over 1,000 of Inkscape's actions over D-Bus (1,083 app-scope plus 163 window-scope on Inkscape 1.4.4 — ask for the exact figure with `inkscape_live(operation="ping")`), fall back to headless CLI when the GUI isn't running, and run inkex extensions for things D-Bus doesn't cover.
 
 ## Available tools
 
 - **`inkscape_file`** — load, save, convert (PDF/PNG/EPS/PS/…), validate, batch convert.
-- **`inkscape_vector`** — 47 ops covering boolean, tracing, path simplification, optimization, layer export, geometry mutation, barcodes, LPE chains, tile clones.
+- **`inkscape_vector`** — 49 ops covering boolean, tracing, path simplification, optimization, alignment, layer export, geometry mutation, barcodes, LPE chains, tile clones.
 - **`inkscape_analysis`** — quality scoring, statistics, object lists, layer structure.
 - **`inkscape_system`** — server status, diagnostics, extension discovery and execution.
 - **`inkscape_extension`** — discover and invoke any installed inkex extension (headless or on the live canvas).
@@ -151,6 +153,12 @@ The agent picks the right tool. It can drive 1,073 of Inkscape's actions over D-
 - **`inkscape_live`** — drive the running GUI over D-Bus: live edits, paste-in-place, XML edits, `rasterize` so the agent can see the canvas (preserves undo).
 
 Full operation list in [`docs/TOOLS.md`](docs/TOOLS.md).
+
+## How the agent learns to use it
+
+An agent that just installed this server doesn't know your workflow, so the server teaches it. MCP's `InitializeResult.instructions` is pushed into the client's system prompt on connect, and this server uses it to establish the working method rather than just the mechanics: **compose procedurally instead of hand-writing SVG** (place primitives, then let Inkscape align, distribute, boolean and clone them), **rasterize and actually look at the result** before declaring it done, **ask you to select** the objects you want help with, and **open the dialog or tool** you're asking about instead of describing a menu path.
+
+Deeper material is pull-based — `resource://inkscape/mcp-workflow` (operational guide, recipes, and the Inkscape rendering pitfalls that silently ruin output), `resource://inkscape/cli-actions` (the full verb catalog), plus `prompt://inkscape/design-workflow` for the step-by-step design loop, which most clients surface as a slash command. The pushed instructions name those explicitly so the agent knows to fetch them.
 
 ## Learn more
 

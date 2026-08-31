@@ -34,6 +34,37 @@ def register_prompts_and_resources(mcp: FastMCP) -> None:
 3. Barcodes/QR: inkscape_vector(operation="generate_barcode_qr", output_path="...", barcode_data="...").
 4. Always pass input_path and output_path when the operation writes a file; verify success in the response dict."""
 
+    @mcp.prompt("prompt://inkscape/design-workflow")
+    def prompt_design_workflow() -> str:
+        """Compose artwork on the live canvas from primitives — the default design loop."""
+        return """Design on the user's live Inkscape canvas by composing primitives, not by
+hand-writing a finished SVG. Hand-authored SVG produces brittle coordinates, no reuse, and
+a document the user cannot edit afterwards.
+
+0. `inkscape_live(operation="ping")` to confirm the bridge, then read
+   `resource://inkscape/mcp-workflow` for op selection and the Inkscape rendering pitfalls.
+1. Establish the target. If it is at all ambiguous which objects are in scope, ASK THE USER
+   TO SELECT them on canvas, then read it back with `inkscape_live(operation="get_selection")`.
+   Otherwise read context with `inspect_view`, `inspect_layers`, `inspect_element`.
+2. Block out rough geometry with stable, meaningful `id`s on everything you create — ids are
+   the handle for every later edit.
+3. Let Inkscape do the geometry rather than computing it:
+   - layout: `inkscape_vector` `align` (operation_type e.g. "top", "hcenter vcenter") and
+     `distribute` ("hgap", "vgap"), `page_fit_to_selection`, `fit_canvas_to_drawing`
+   - combining: `apply_boolean` (union / difference / intersection / exclusion),
+     `path_combine`, `path_break_apart`, `path_inset_outset`, `stroke_to_path`
+   - repetition: `clone`, `tile_clone`, `object_to_marker`, `object_to_pattern`
+4. Apply effects through Inkscape: `inkscape_extension(operation="run_live", target=<id>)`
+   with NO params, after selecting the target — that is the mode that sees the live document
+   and selection. Also `lpe_*` for path effects.
+5. RASTERIZE AND LOOK: `inkscape_live(operation="rasterize")`, then read the PNG back and
+   judge it. Do not assume the SVG renders as intended — check occlusion, clipping, colour
+   and filter regions visually. Iterate from what you see.
+6. Offer the relevant dialog when the user would want to take over —
+   `apply_action("dialog-open", payload="FillStroke" | "AlignDistribute" | "XMLEditor" | ...)`.
+
+Every step is one undo entry, so work incrementally and let the user co-edit alongside you."""
+
     @mcp.prompt("prompt://inkscape/analysis-workflow")
     def prompt_analysis_workflow() -> str:
         """Guide document analysis before editing."""
@@ -47,21 +78,31 @@ def register_prompts_and_resources(mcp: FastMCP) -> None:
     @mcp.resource("resource://inkscape/capabilities")
     def resource_capabilities() -> str:
         """Static capability summary for indexers and clients."""
-        return """inkscape_mcp (FastMCP 3.2+)
+        # Counts come from the operation Literals so this can't drift out of sync with
+        # the tool surface again (it claimed 22 vector ops against an actual 49).
+        from .mcp_tool_types import OPERATION_COUNTS as c
+
+        return f"""inkscape_mcp
 
 Broad primitives:
-  inkscape_live       — drive a running Inkscape via D-Bus (apply_action, edit_xml, insert_svg,
-                        path_edit, inspect_* family, get_selection, list_actions [filtered], ...)
+  inkscape_live       — drive a running Inkscape via D-Bus ({c["inkscape_live"]} ops: apply_action, edit_xml,
+                        insert_svg, path_edit, inspect_* family, get_selection, rasterize, ...)
   inkscape_extension  — discover / describe / run any installed Inkscape extension with custom params
-                        (list, describe, run, run_live)
-  inkscape_file       — load / save / convert / info / validate / list_formats
-  inkscape_vector     — 22 vector ops (trace, boolean, path simplify, etc.)
-  inkscape_analysis   — quality / statistics / validate / objects / dimensions / structure
-  inkscape_system     — status / help / diagnostics / version / config
+                        ({c["inkscape_extension"]} ops: list, describe, run, run_live)
+  inkscape_file       — {c["inkscape_file"]} ops: load / save / convert / info / validate / list_formats /
+                        batch_convert
+  inkscape_vector     — {c["inkscape_vector"]} vector ops (trace, boolean, path simplify, align, LPE,
+                        tile clones, etc.)
+  inkscape_analysis   — {c["inkscape_analysis"]} ops: quality / statistics / validate / objects / dimensions /
+                        structure
+  inkscape_system     — {c["inkscape_system"]} ops: status / help / diagnostics / version / config /
+                        list_extensions / execute_extension
 
 Convenience tools (unique XML logic):
-  inkscape_gradient   — gradient stops (add / remove / set color / convert linear↔radial / list)
-  inkscape_metadata   — Dublin-Core RDF metadata (title / creator / description / rights / keywords)
+  inkscape_gradient   — gradient stops ({c["inkscape_gradient"]} ops: add / remove / set color /
+                        convert linear<->radial / list)
+  inkscape_metadata   — Dublin-Core RDF metadata ({c["inkscape_metadata"]} ops: title / creator /
+                        description / rights / keywords)
 
 Prompts: prompt://inkscape/svg-file-workflow, vector-editing-workflow, analysis-workflow
 

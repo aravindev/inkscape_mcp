@@ -74,9 +74,11 @@ async def test_export_do_lands_in_actions_not_the_filename(monkeypatch, server, 
     async def fake_exec(cmd_args, timeout):
         captured["argv"] = cmd_args
         Path(str(tmp_path / "out.svg")).write_text("<svg/>")
-        return ""
+        return "", ""
 
-    monkeypatch.setattr(server.cli_wrapper, "_execute_command", fake_exec)
+    # _execute_actions needs stderr to spot action-level failures, so it goes through
+    # _execute_command_capture — which returns (stdout, stderr) rather than stdout.
+    monkeypatch.setattr(server.cli_wrapper, "_execute_command_capture", fake_exec)
     await server.cli_wrapper._execute_actions(
         input_path=str(FIXTURES / "minimal.svg"),
         actions=["select-all"],
@@ -714,3 +716,325 @@ def test_tile_clone_preserves_comments_and_pis(tmp_path):
 def test_cli_wrapper_construction_requires_a_real_executable(tmp_path):
     with pytest.raises(Exception, match=r"not found|not configured"):
         InkscapeCliWrapper(argparse.Namespace(inkscape_executable=str(tmp_path / "nope"), process_timeout=30))
+
+
+# --------------------------------------------------------------------------------------
+# F1 — actions that need an argument were fired bare (v1.2.0 release testing)
+#
+# Inkscape reports "expected argument format" on stderr and exits 0, so the export was
+# written unmodified and every op below reported success while doing nothing.
+# --------------------------------------------------------------------------------------
+
+
+def _rect_xy(path: Path, rect_id: str) -> tuple[float, float]:
+    root = etree.parse(str(path)).getroot()
+    for el in root.iter(f"{SVG}rect"):
+        if el.get("id") == rect_id:
+            return float(el.get("x", "0")), float(el.get("y", "0"))
+    raise AssertionError(f"rect {rect_id!r} not found in {path}")
+
+
+@pytest.fixture
+def staggered_svg(tmp_path: Path) -> Path:
+    """Three rects at different x and y, unevenly spaced — align/distribute both move them."""
+    dest = tmp_path / "staggered.svg"
+    dest.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="120" viewBox="0 0 200 120">'
+        '<rect id="a" x="10" y="10" width="20" height="20" fill="#e11"/>'
+        '<rect id="b" x="40" y="50" width="20" height="20" fill="#1e1"/>'
+        '<rect id="c" x="160" y="90" width="20" height="20" fill="#11e"/>'
+        "</svg>\n"
+    )
+    return dest
+
+
+async def test_align_actually_moves_objects(mcp, staggered_svg, tmp_path):
+    """`object-align` fired bare is a no-op; the direction must reach the action."""
+    out = tmp_path / "aligned.svg"
+    payload = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {
+                "operation": "align",
+                "input_path": str(staggered_svg),
+                "output_path": str(out),
+                "operation_type": "top",
+            },
+        )
+    )
+    assert payload["success"] is True, payload
+    # Aligning to top pulls every rect to the topmost edge (y=10).
+    assert [_rect_xy(out, i)[1] for i in "abc"] == [10.0, 10.0, 10.0]
+
+
+async def test_distribute_actually_moves_objects(mcp, staggered_svg, tmp_path):
+    out = tmp_path / "distributed.svg"
+    payload = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {
+                "operation": "distribute",
+                "input_path": str(staggered_svg),
+                "output_path": str(out),
+                "operation_type": "hgap",
+            },
+        )
+    )
+    assert payload["success"] is True, payload
+    xs = [_rect_xy(out, i)[0] for i in "abc"]
+    assert xs != [10.0, 40.0, 160.0], "distribute left the drawing untouched"
+    # Equal horizontal gaps once distributed.
+    assert round(xs[1] - xs[0], 3) == round(xs[2] - xs[1], 3)
+
+
+@pytest.mark.parametrize(
+    ("op", "operation_type"),
+    [("align", ""), ("align", "sideways"), ("distribute", ""), ("distribute", "diagonally")],
+)
+async def test_align_distribute_reject_a_missing_or_bogus_direction(mcp, staggered_svg, tmp_path, op, operation_type):
+    """Better an upfront error than a silent no-op reported as success."""
+    payload = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {
+                "operation": op,
+                "input_path": str(staggered_svg),
+                "output_path": str(tmp_path / f"{op}.svg"),
+                "operation_type": operation_type,
+            },
+        )
+    )
+    assert payload["success"] is False
+    assert "operation_type" in payload["message"]
+
+
+async def test_trace_image_produces_paths_not_an_embedded_bitmap(mcp, trace_bitmap, tmp_path):
+    """`object-trace` bare exported the source PNG re-wrapped in <image> — zero paths."""
+    out = tmp_path / "traced.svg"
+    payload = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {"operation": "trace_image", "input_path": str(trace_bitmap), "output_path": str(out)},
+        )
+    )
+    assert payload["success"] is True, payload
+    root = etree.parse(str(out)).getroot()
+    assert len(list(root.iter(f"{SVG}path"))) > 0, "trace produced no paths"
+    assert payload["data"]["paths"] > 0
+
+
+async def test_execute_actions_raises_on_a_rejected_action(server, minimal_svg, tmp_path):
+    """The systemic guard: stderr says the action failed, so don't report success."""
+    from inkscape_mcp.cli_wrapper import InkscapeExecutionError
+
+    with pytest.raises(InkscapeExecutionError, match="rejected an action"):
+        await server.cli_wrapper._execute_actions(
+            input_path=str(minimal_svg),
+            actions=["select-all", "object-trace"],  # object-trace requires an argument
+            output_path=str(tmp_path / "out.svg"),
+        )
+
+
+# --------------------------------------------------------------------------------------
+# F2 — measure_object queried the drawing, never the object
+# --------------------------------------------------------------------------------------
+
+
+async def test_measure_object_measures_the_object_not_the_drawing(mcp, minimal_svg):
+    """`--query-x=<id>` isn't the CLI syntax; the id must go in --query-id.
+
+    Inkscape ignored the malformed value and answered for the whole drawing, so every
+    object in a document measured identically.
+    """
+    results = {}
+    for oid in ("rect-1", "circle-1"):
+        payload = _payload(
+            await mcp.call_tool(
+                "inkscape_vector",
+                {"operation": "measure_object", "input_path": str(minimal_svg), "object_id": oid},
+            )
+        )
+        assert payload["success"] is True, payload
+        results[oid] = (payload["data"]["width"], payload["data"]["height"])
+
+    # rect-1 is 40x40; circle-1 is r=20 so 40x40 too — but at different positions.
+    assert results["rect-1"] == (40.0, 40.0), results
+    assert results["circle-1"] == (40.0, 40.0), results
+
+    rect = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {"operation": "measure_object", "input_path": str(minimal_svg), "object_id": "rect-1"},
+        )
+    )["data"]
+    circle = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {"operation": "measure_object", "input_path": str(minimal_svg), "object_id": "circle-1"},
+        )
+    )["data"]
+    assert rect["x"] != circle["x"], "both objects reported the same bbox (the drawing's)"
+    assert (rect["x"], rect["y"]) == (10.0, 10.0)
+    assert (circle["x"], circle["y"]) == (80.0, 30.0)
+
+
+async def test_measure_object_reports_a_missing_id(mcp, minimal_svg):
+    """A typo'd id used to silently return the drawing bbox."""
+    payload = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {"operation": "measure_object", "input_path": str(minimal_svg), "object_id": "no-such-id"},
+        )
+    )
+    assert payload["success"] is False
+    assert "no-such-id" in payload["message"]
+
+
+# --------------------------------------------------------------------------------------
+# F3 — scour_svg was a byte-identical alias of optimize_svg
+# --------------------------------------------------------------------------------------
+
+
+async def test_scour_svg_actually_minifies(mcp, minimal_svg, tmp_path):
+    """Both ops ran the same plain-SVG export; scour was never imported at all."""
+    optimized = tmp_path / "optimized.svg"
+    scoured = tmp_path / "scoured.svg"
+    for op, out in (("optimize_svg", optimized), ("scour_svg", scoured)):
+        payload = _payload(
+            await mcp.call_tool(
+                "inkscape_vector",
+                {"operation": op, "input_path": str(minimal_svg), "output_path": str(out)},
+            )
+        )
+        assert payload["success"] is True, payload
+
+    assert optimized.read_bytes() != scoured.read_bytes(), "scour_svg is still an alias of optimize_svg"
+    assert scoured.stat().st_size < optimized.stat().st_size
+    # And it stays valid SVG with the shapes intact.
+    root = etree.parse(str(scoured)).getroot()
+    assert {e.get("id") for e in root.iter()} >= {"rect-1", "circle-1"}
+
+
+async def test_optimize_svg_reports_demoted_layers(mcp, minimal_svg, tmp_path):
+    """Plain-SVG export drops inkscape:groupmode, silently flattening layers."""
+    out = tmp_path / "flat.svg"
+    payload = _payload(
+        await mcp.call_tool(
+            "inkscape_vector",
+            {"operation": "optimize_svg", "input_path": str(minimal_svg), "output_path": str(out)},
+        )
+    )
+    assert payload["success"] is True, payload
+    assert payload["data"]["layers_demoted"] == 2
+    assert "demoted" in payload["message"]
+
+
+# --------------------------------------------------------------------------------------
+# F4 — clipboard refused XWayland even with a working xclip
+# --------------------------------------------------------------------------------------
+
+
+def test_wayland_without_wl_copy_falls_back_to_xclip(monkeypatch):
+    """Inkscape runs as an XWayland client, so an X11 clipboard reaches it fine.
+
+    The early return meant a stock Ubuntu 24.04 box (Wayland by default, and the
+    documented apt line installs xclip) had insert_svg permanently disabled.
+    """
+    import shutil as _shutil
+
+    from inkscape_mcp import clipboard
+
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    monkeypatch.setenv("DISPLAY", ":1")
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: None if name == "wl-copy" else "/usr/bin/xclip")
+    assert clipboard.detect_session() == "x11"
+
+    # wl-copy present → still preferred on a Wayland session.
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert clipboard.detect_session() == "wayland"
+
+    # Neither tool → no session, and the error names both options.
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: None)
+    assert clipboard.detect_session() == ""
+    with pytest.raises(RuntimeError, match="wl-clipboard"):
+        clipboard.stage_svg_fragment("<rect/>")
+    assert _shutil is not None
+
+
+# --------------------------------------------------------------------------------------
+# F5 — advertised operation counts drifted apart across four call sites
+# --------------------------------------------------------------------------------------
+
+
+async def test_advertised_operation_counts_match_the_literals(mcp):
+    """README said 47, the capabilities resource 22, system help 23; the truth was 49."""
+    from inkscape_mcp.mcp_tool_types import OPERATION_COUNTS
+
+    vector_ops = OPERATION_COUNTS["inkscape_vector"]
+
+    help_payload = _payload(await mcp.call_tool("inkscape_system", {"operation": "help"}))
+    help_text = " ".join(help_payload["data"]["tools"])
+    assert f"{vector_ops} ops" in help_text
+
+    capabilities = await mcp.read_resource("resource://inkscape/capabilities")
+    assert f"{vector_ops} vector ops" in capabilities[0].text
+
+    # And every tool named in help is actually registered.
+    registered = {t.name for t in await mcp.list_tools()}
+    assert registered == set(OPERATION_COUNTS)
+
+
+async def test_diagnostics_reports_config_provenance(mcp):
+    """Documented as reporting env var / config file / default — it reported nothing."""
+    payload = _payload(await mcp.call_tool("inkscape_system", {"operation": "diagnostics"}))
+    sources = payload["data"]["config_sources"]
+    assert "inkscape_executable" in sources
+    assert sources["inkscape_executable"]["source"] in {
+        "env_var",
+        "config_file",
+        "cli_flag",
+        "auto_detected",
+        "default",
+    }
+    assert "value" in sources["inkscape_executable"]
+
+
+# --------------------------------------------------------------------------------------
+# F6 — INKSCAPE_BIN was resolved correctly, then overwritten by PATH auto-detection
+# --------------------------------------------------------------------------------------
+
+
+async def test_inkscape_bin_env_var_is_not_clobbered_by_autodetection(monkeypatch, tmp_path):
+    """The documented way to pin a non-default Inkscape silently did nothing.
+
+    load_config resolved $INKSCAPE_BIN and recorded it in _sources, but initialize()
+    then ran PATH detection unconditionally and assigned over it.
+    """
+    from inkscape_mcp.config import ConfigSource
+    from inkscape_mcp.main import InkscapeMCPServer
+
+    pinned = tmp_path / "inkscape"
+    pinned.write_text('#!/bin/sh\nexec /usr/bin/inkscape "$@"\n')
+    pinned.chmod(0o755)
+
+    monkeypatch.setenv("INKSCAPE_BIN", str(pinned))
+    server = InkscapeMCPServer()
+    assert await server.initialize()
+
+    assert server.config.inkscape_executable == str(pinned)
+    assert server.config._sources["inkscape_executable"].source == ConfigSource.ENV_VAR
+
+
+async def test_autodetected_executable_is_reported_as_autodetected(monkeypatch):
+    """With nothing pinned, provenance should say so rather than 'default: None'."""
+    from inkscape_mcp.config import ConfigSource
+    from inkscape_mcp.main import InkscapeMCPServer
+
+    monkeypatch.delenv("INKSCAPE_BIN", raising=False)
+    server = InkscapeMCPServer()
+    assert await server.initialize()
+
+    resolved = server.config._sources["inkscape_executable"]
+    assert resolved.source == ConfigSource.AUTO_DETECTED
+    assert resolved.value == server.config.inkscape_executable

@@ -6,6 +6,36 @@ When the `inkscape_mcp` server is reachable and Inkscape is running, **prefer dr
 
 Hand-author SVG when: the document doesn't exist yet, no Inkscape session is active, or you need a single-shot generation (icon, logo). Drive via MCP when: the file is already open, you're iterating, or you need an op Inkscape provides natively.
 
+## Compose procedurally — the default design loop
+
+Building a drawing as one blob of hand-written SVG is the failure mode this server exists to prevent: brittle hand-computed coordinates, no reuse, and a document the user can't edit afterwards. Build it up the way a designer would instead.
+
+| Instead of… | Do this |
+|---|---|
+| Computing aligned/evenly-spaced coordinates by hand | `inkscape_vector` `align` (`operation_type="top"`, `"hcenter vcenter"`, `"top page"`) and `distribute` (`"hgap"`, `"vgap"`) |
+| Writing one path that is really several shapes merged | Place the shapes, then `apply_boolean` (`union` / `difference` / `intersection` / `exclusion`), `path_combine`, `path_division`, `path_cut` |
+| Copy-pasting the same geometry N times | `clone`, `tile_clone`, `object_to_marker`, `object_to_pattern`, or `<symbol>`/`<use>` — one edit updates every instance |
+| Hand-authoring filter primitives | `inkscape_extension(operation="run_live", target=<id>)` with **no params**, after selecting the target; or `lpe_*` for path effects. Read the rendering-pitfalls section below before writing filters yourself |
+| Outlining a stroke by hand | `stroke_to_path`; grow/shrink with `path_inset_outset` |
+| Resizing the canvas by editing width/height | `fit_canvas_to_drawing`, `page_fit_to_selection` |
+
+Two habits that make everything above work:
+
+1. **Give every meaningful element a stable `id` as you create it.** Ids are the handle for every later edit — unaddressable geometry has to be rebuilt rather than adjusted.
+2. **Work incrementally.** Each call is one Inkscape undo entry, so the user can step back through your work and co-edit alongside you.
+
+## Look at your work
+
+`rasterize` gives you eyes — render the document, a single element, or a region to PNG and read the image back. After any visual change, LOOK rather than assuming the SVG renders as intended: occlusion, clipped filter regions, invisible elements and colour mistakes only show up in the raster. When you need numbers instead of pixels, `inspect_element` returns the post-transform bbox and the fully-cascaded computed style.
+
+## Work with the person at the keyboard
+
+The canvas is shared, so collaborate rather than guess.
+
+- **Ask them to select.** For an ambiguous target ("fix the spacing", "recolor this"), ask the user to select the object or group on canvas and read it back with `get_selection` / `inspect_selection`. Faster and far less error-prone than inferring intent from the XML.
+- **Show them your candidate.** `set_selection` highlights what you're about to change on their canvas before you change it.
+- **Open the UI for them.** When they ask where a setting lives, open it rather than describing a menu path — `apply_action("dialog-open", payload=<name>)`. Valid dialog names: `AlignDistribute`, `Clonetiler`, `DocumentProperties`, `Export`, `FillStroke`, `FilterEffects`, `Find`, `Glyphs`, `IconPreview`, `Input`, `LivePathEffect`, `Memory`, `Messages`, `ObjectAttributes`, `ObjectProperties`, `Objects`, `PaintServers`, `Selectors`, `Spellcheck`, `SVGFonts`, `Swatches`, `Symbols`, `Text`, `Trace`, `Transform`, `UndoHistory`, `XMLEditor`. Tools via `apply_action("tool-switch", payload=<name>)`: `Arc`, `Booleans`, `Calligraphic`, `Connector`, `Dropper`, `Eraser`, `Gradient`, `LPETool`, `Measure`, `Mesh`, `Node`, `PaintBucket`, `Pen`, `Pencil`, `Rect`, `Select`, `Spiral`, `Spray`, `Star`, `Text`, `Tweak`, `Zoom`. Both are read-only — they never modify the document.
+
 ## Picking the right operation
 
 | You want to… | Use |

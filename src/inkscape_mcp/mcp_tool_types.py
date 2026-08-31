@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 InkscapeFileOperation = Literal[
     "load",
@@ -132,3 +132,18 @@ InkscapeExtensionOperation = Literal[
     "run",
     "run_live",
 ]
+
+# Derive advertised operation counts from the Literals themselves. These used to be
+# hardcoded per call site and drifted apart — the vector count alone was simultaneously
+# claimed as 22 (capabilities resource), 23 (system help) and 47 (README) against an
+# actual 49.
+OPERATION_COUNTS: dict[str, int] = {
+    "inkscape_file": len(get_args(InkscapeFileOperation)),
+    "inkscape_vector": len(get_args(InkscapeVectorOperation)),
+    "inkscape_analysis": len(get_args(InkscapeAnalysisOperation)),
+    "inkscape_system": len(get_args(InkscapeSystemOperation)),
+    "inkscape_gradient": len(get_args(InkscapeGradientOperation)),
+    "inkscape_live": len(get_args(InkscapeLiveOperation)),
+    "inkscape_metadata": len(get_args(InkscapeMetadataOperation)),
+    "inkscape_extension": len(get_args(InkscapeExtensionOperation)),
+}

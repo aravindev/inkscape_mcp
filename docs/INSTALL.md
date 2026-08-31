@@ -13,9 +13,11 @@ sudo apt install inkscape
 # Build deps for the Python extensions pulled in by inkex / pygobject
 sudo apt install libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev pkg-config python3-dev
 
-# Clipboard staging for inkscape_live's insert_svg
-sudo apt install xclip        # X11
-# sudo apt install wl-clipboard  # Wayland (auto-detected)
+# Clipboard staging for inkscape_live's insert_svg. Either package works on either
+# session type — the backend is auto-detected, and on Wayland xclip is used via
+# XWayland when wl-clipboard isn't installed.
+sudo apt install xclip
+# sudo apt install wl-clipboard  # preferred on a native Wayland session
 ```
 
 You also need **Python 3.12+** and **[uv](https://docs.astral.sh/uv/install/)** (recommended) or any modern pip.

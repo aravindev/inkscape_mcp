@@ -60,7 +60,71 @@ logger = setup_logging(component="main")
 # tools instead of hand-authoring SVG.
 SERVER_INSTRUCTIONS = """\
 Inkscape MCP drives Inkscape both headlessly (CLI) and on a LIVE, already-open Inkscape
-window (the `inkscape_live` tool, over D-Bus). Default working style:
+window (the `inkscape_live` tool, over D-Bus).
+
+READ FIRST for anything beyond a one-liner: `resource://inkscape/mcp-workflow` is the
+operational guide — which op covers which task, action gotchas, recipes, and Inkscape
+rendering pitfalls that will silently ruin output if you don't know them (feDropShadow
+is silently broken in 1.4; filters need `inkscape:auto-region="false"` or their bounds
+get clamped). `resource://inkscape/cli-actions` is the full verb catalog for when
+`list_actions` filtering isn't enough. Reading these costs one call and saves rework.
+
+## You are a designer at a workstation, not an SVG text generator
+
+Do NOT compute an entire drawing as hand-written SVG and paste it in. That is the
+failure mode this server exists to prevent — it produces brittle coordinates, no
+reuse, and a document the user can't edit afterwards. Instead BUILD IT UP the way a
+designer would, one Inkscape operation at a time:
+
+- **Place primitives, then relate them.** Drop rough shapes, then let Inkscape do the
+  geometry: `inkscape_vector` `align` / `distribute` for layout, `apply_boolean`
+  (union/difference/intersection/exclusion) to cut and merge components,
+  `path_inset_outset`, `stroke_to_path`, `path_combine`. Never hand-compute a
+  coordinate that an alignment op can derive.
+- **Compose, don't duplicate.** Reuse via `clone` / `tile_clone` / `object_to_marker` /
+  `object_to_pattern` and `<symbol>`/`<use>`, so one edit updates every instance.
+- **Effects belong to Inkscape.** Filters, blurs, shadows, path effects and tracing go
+  through `inkscape_extension` `run_live` (no params) or the LPE ops — not hand-authored
+  filter primitives, unless the pitfalls doc tells you to.
+- **Give every meaningful element a stable `id`** as you create it. Ids are the handle
+  for every later edit; unaddressable geometry has to be rebuilt instead of adjusted.
+- **Work incrementally and keep it undoable.** Each call is one Inkscape undo entry, so
+  the user can step back through your work and co-edit alongside you.
+
+## Look at your work
+
+You have eyes: `inkscape_live` `rasterize` renders the document, one element, or a
+region to PNG — read the image back. After anything visual, LOOK at the result rather
+than assuming the SVG you wrote renders as intended. Occlusion, clipped filter regions,
+invisible elements and colour mistakes are only obvious in the raster. `inspect_element`
+gives the post-transform bbox and the fully-cascaded computed style when you need
+numbers instead of pixels.
+
+## Work WITH the person at the keyboard
+
+This is a shared canvas, so collaborate rather than guess:
+
+- **Ask them to select.** When the target is ambiguous ("fix the spacing", "recolor
+  this"), ask the user to select the object or group on canvas, then read it with
+  `get_selection` / `inspect_selection`. That is faster and less error-prone than
+  inferring intent from the XML.
+- **Show them what you mean.** `set_selection` selects your candidate on their canvas
+  so they can see what you're about to change before you change it.
+- **Open the UI for them.** They can ask for any dialog or tool and you can open it.
+  `apply_action("dialog-open", payload=<name>)` where <name> is one of:
+  AlignDistribute, Clonetiler, DocumentProperties, Export, FillStroke, FilterEffects,
+  Find, Glyphs, IconPreview, Input, LivePathEffect, Memory, Messages, ObjectAttributes,
+  ObjectProperties, Objects, PaintServers, Selectors, Spellcheck, SVGFonts, Swatches,
+  Symbols, Text, Trace, Transform, UndoHistory, XMLEditor.
+  `apply_action("tool-switch", payload=<name>)` where <name> is one of:
+  Arc, Booleans, Calligraphic, Connector, Dropper, Eraser, Gradient, LPETool, Measure,
+  Mesh, Node, PaintBucket, Pen, Pencil, Rect, Select, Spiral, Spray, Star, Text, Tweak,
+  Zoom.
+  Answering "where is that setting?" by opening the dialog on their screen beats
+  describing a menu path. Opening dialogs and switching tools is read-only — it never
+  edits the document.
+
+## Mechanics
 
 1. Work on the user's OPEN document in place. If Inkscape is running, use `inkscape_live`
    to read and edit that live document instead of creating a new file — `inkscape_live`
@@ -78,13 +142,22 @@ window (the `inkscape_live` tool, over D-Bus). Default working style:
    edits with no native op (e.g. editing a gradient on the open document), use
    `inkscape_live` `edit_xml` (raw-SVG append/set_attr/remove).
 
+   `run_live` has two modes and they are NOT interchangeable. Call it with NO params to
+   apply a *transformer* (filter, drop shadow, blur, colour shift, path effect): that
+   fires the extension over D-Bus against the real document and the real selection, so
+   set the selection first with `set_selection`. Passing params instead renders the
+   extension on an EMPTY canvas and appends the result — right for *generator*
+   extensions (qr, barcode, calendar, gears), wrong for anything that must transform
+   existing content.
+
 3. For live structural edits, `edit_xml` is the reliable, persisting path: it targets
    nodes by XPath and saves in place. `set_attr`/`remove` accept a multi-node XPath
    (e.g. `//*[@id='g']/*[position()>9]`). Note: `execute_inkex` does not currently persist
    document mutations — do not rely on it for edits.
 
-4. On Wayland without `wl-clipboard`, clipboard-based `insert_svg` is unavailable; insert
-   content with `edit_xml` `append` instead.
+4. Clipboard-based `insert_svg` needs `wl-copy` (wl-clipboard) or `xclip` on PATH; on a
+   Wayland session it falls back to `xclip` via XWayland. With neither installed,
+   `insert_svg` is unavailable — insert content with `edit_xml` `append` instead.
 """
 
 
@@ -105,6 +178,14 @@ class InkscapeMCPServer:
         self.tools: dict[str, Any] = {}
         self.logger = logging.getLogger(__name__)
         self.cli_wrapper: Any | None = None
+
+    def _record_config_source(self, name: str, value: Any) -> None:
+        """Stamp a setting as auto-detected so `diagnostics` reports its real provenance."""
+        from .config import ConfigSource, Resolved
+
+        sources = getattr(self.config, "_sources", None)
+        if sources is not None:
+            sources[name] = Resolved(value, ConfigSource.AUTO_DETECTED, detail="found on $PATH")
 
     def _validate_configuration(self) -> bool:
         """Validate server configuration."""
@@ -127,12 +208,22 @@ class InkscapeMCPServer:
             if not self._validate_configuration():
                 return False
 
-            # Initialize Inkscape detector
+            # Initialize Inkscape detector. Only fall back to PATH detection when nothing
+            # explicitly configured the binary — this used to run unconditionally and
+            # overwrite an INKSCAPE_BIN / config-file value with whatever was on PATH,
+            # silently defeating the documented way to pin a non-default Inkscape.
             self.inkscape_detector = InkscapeDetector()
-            inkscape_path = self.inkscape_detector.detect_inkscape_installation()
+            configured = self.config.inkscape_executable
+            if configured:
+                inkscape_path: str | None = str(configured)
+                logger.info(f"Using configured Inkscape: {inkscape_path}")
+            else:
+                inkscape_path = self.inkscape_detector.detect_inkscape_installation()
 
             if inkscape_path:
-                logger.info(f"Found Inkscape at: {inkscape_path}")
+                if not configured:
+                    logger.info(f"Found Inkscape at: {inkscape_path}")
+                    self._record_config_source("inkscape_executable", inkscape_path)
                 self.config.inkscape_executable = str(inkscape_path)
 
                 try:
@@ -302,6 +393,13 @@ class InkscapeMCPServer:
             x: float = 300,
             y: float = 200,
             description: str = "",
+            trace_scans: int = 4,
+            trace_smooth: bool = True,
+            trace_stack: bool = True,
+            trace_remove_background: bool = False,
+            trace_speckles: int = 2,
+            trace_smooth_corners: float = 1.0,
+            trace_optimize: float = 0.2,
         ) -> dict[str, Any]:
             """INKSCAPE_VECTOR — Vector editing, booleans, trace, QR/barcode, path ops, previews.
 
@@ -318,7 +416,17 @@ class InkscapeMCPServer:
                 object_id: Target element — measure_object, count_nodes, path_simplify,
                     object_raise, object_lower.
                 object_ids / select_all: Selection for apply_boolean (supply one or the other).
+                    object_ids also scopes align / distribute; omit it to act on everything.
                 operation_type: union | difference | intersection | exclusion for apply_boolean.
+                    REQUIRED for align — one or two of left|hcenter|right / top|vcenter|bottom
+                    plus an optional anchor (last|first|biggest|smallest|page|drawing|selection|pref),
+                    e.g. "top", "hcenter vcenter", "top page".
+                    REQUIRED for distribute — exactly one of
+                    hgap|left|hcenter|right|vgap|top|vcenter|bottom.
+                trace_scans, trace_smooth, trace_stack, trace_remove_background, trace_speckles,
+                    trace_smooth_corners, trace_optimize: trace_image tuning. Defaults give a
+                    4-scan stacked colour trace; raise trace_scans for more colour detail,
+                    raise trace_speckles to drop more noise.
                 barcode_data: Payload for generate_barcode_qr (required).
                 source_id, rows, cols, x_shift, y_shift, rotation_step, scale_step: tile_clone.
                 text_id, path_id: text_on_path (both required).
@@ -363,6 +471,13 @@ class InkscapeMCPServer:
                 x=x,
                 y=y,
                 description=description,
+                trace_scans=trace_scans,
+                trace_smooth=trace_smooth,
+                trace_stack=trace_stack,
+                trace_remove_background=trace_remove_background,
+                trace_speckles=trace_speckles,
+                trace_smooth_corners=trace_smooth_corners,
+                trace_optimize=trace_optimize,
                 cli_wrapper=self.cli_wrapper,
                 config=self.config,
             )
@@ -520,7 +635,10 @@ class InkscapeMCPServer:
 
             Work on the open document IN PLACE; do not recreate it. Prefer Inkscape's own
             live tools over hand-writing SVG: use `apply_action` for actions and
-            `inkscape_extension` `run_live` for filters/effects like drop shadow and blur.
+            `inkscape_extension` `run_live` WITH NO PARAMS for filters/effects like drop
+            shadow and blur — select the target first, then call it; that is the only
+            run_live mode that sees the live document and selection. (Passing params
+            renders on an empty canvas and suits generator extensions only.)
             (The `inkscape_gradient` tool is headless/file-based — not for the live doc.)
             Use `edit_xml` (raw-SVG set_attr/append/insert_*/remove/replace, targeted by
             XPath, multi-node capable) for everything else, e.g. editing gradients on the

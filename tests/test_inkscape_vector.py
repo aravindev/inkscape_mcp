@@ -205,6 +205,7 @@ async def test_text_on_path(server, tmp_path):
     assert out.exists() and out.stat().st_size > 0
 
 
+# align / distribute additionally require an operation_type — they are no-ops without one.
 NEW_OPS_TOOLBOX = [
     "path_division",
     "path_cut",
@@ -215,8 +216,8 @@ NEW_OPS_TOOLBOX = [
     "flip_vertical",
     "rotate_90_cw",
     "rotate_90_ccw",
-    "align",
-    "distribute",
+    ("align", "top"),
+    ("distribute", "hgap"),
     "ungroup",
     "clone",
     "clone_unlink",
@@ -227,11 +228,12 @@ NEW_OPS_TOOLBOX = [
 
 @pytest.mark.parametrize("op", NEW_OPS_TOOLBOX)
 async def test_path_object_toolbox(mcp, multi_path_svg, tmp_path, op):
+    op, operation_type = op if isinstance(op, tuple) else (op, "")
     out = tmp_path / f"{op}.svg"
-    res = await mcp.call_tool(
-        "inkscape_vector",
-        {"operation": op, "input_path": str(multi_path_svg), "output_path": str(out)},
-    )
+    args = {"operation": op, "input_path": str(multi_path_svg), "output_path": str(out)}
+    if operation_type:
+        args["operation_type"] = operation_type
+    res = await mcp.call_tool("inkscape_vector", args)
     payload = _payload(res)
     assert payload["success"] is True, payload
     assert out.exists() and out.stat().st_size > 0
