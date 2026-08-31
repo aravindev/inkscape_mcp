@@ -7,10 +7,33 @@ This module provides core Inkscape command-line functionality for MCP operations
 import asyncio
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Inkscape 1.4 writes per-action failures to stderr and still exits 0. Each of these
+# means the action ran as a no-op, so the export comes out unmodified while every
+# other signal says "success".
+_ACTION_ERROR_PATTERNS = (
+    # action:object_trace: expected argument format: {scans},{smooth},...
+    re.compile(r"^action:\S+:\s*expected argument format:.*$", re.MULTILINE),
+    # action:object_trace: parsing arguments failed: stod
+    re.compile(r"^action:\S+:\s*parsing arguments failed:.*$", re.MULTILINE),
+    # select_by_id: Did not find object with id: nope
+    re.compile(r"^\s*select_by_id:\s*Did not find object with id:.*$", re.MULTILINE),
+)
+
+
+def _find_action_error(stderr_text: str) -> str:
+    """Return the first action-level failure in `stderr_text`, or "" if it is clean."""
+    if not stderr_text:
+        return ""
+    for pattern in _ACTION_ERROR_PATTERNS:
+        if match := pattern.search(stderr_text):
+            return match.group(0).strip()
+    return ""
 
 
 class InkscapeCliError(Exception):
@@ -250,7 +273,14 @@ class InkscapeCliWrapper:
         if output_path:
             cmd_args.append(f"--export-filename={Path(output_path).resolve()!s}")
 
-        result = await self._execute_command(cmd_args, timeout)
+        result, stderr_text = await self._execute_command_capture(cmd_args, timeout)
+
+        # Inkscape reports per-action failures on stderr and still exits 0, so a bad action
+        # chain looks identical to a good one: the export is written, just unmodified. That
+        # made `object-trace`/`object-align`/`object-distribute` fired without their required
+        # argument silently return "success" on an untouched file. Fail loudly instead.
+        if action_error := _find_action_error(stderr_text):
+            raise InkscapeExecutionError(f"Inkscape rejected an action: {action_error} | actions: {actions_str}")
 
         # Inkscape can exit 0 without producing the requested output (e.g. unknown action,
         # mistyped format). Treat a missing/empty output file as a hard failure.
@@ -317,6 +347,16 @@ class InkscapeCliWrapper:
         """
         Execute command with proper error handling and logging.
         """
+        stdout, _ = await self._execute_command_capture(cmd_args, timeout)
+        return stdout
+
+    async def _execute_command_capture(self, cmd_args: list[str], timeout: int) -> tuple[str, str]:
+        """Run Inkscape and return ``(stdout, stderr)``.
+
+        Callers that need to inspect stderr — action-argument errors, missing-id
+        warnings — use this; `_execute_command` keeps returning stdout alone so
+        the `float()` parsers downstream stay unpoisoned by Gtk chatter.
+        """
         try:
             # Use asyncio.create_subprocess_exec for better async handling
             process = await asyncio.create_subprocess_exec(
@@ -341,7 +381,7 @@ class InkscapeCliWrapper:
                     )
                     raise InkscapeExecutionError(error_msg)
 
-                return output
+                return output, stderr_text
 
             except TimeoutError as e:
                 process.kill()

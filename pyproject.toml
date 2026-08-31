@@ -35,6 +35,9 @@ dependencies = [
     "loguru>=0.7.0",
     "inkex>=1.2.0",
     "jeepney>=0.8.0",
+    # Pulled in transitively by inkex, but scour_svg imports it directly — declare it.
+    # inkex pins <0.38, so track that ceiling rather than fighting the resolver.
+    "scour>=0.37,<0.38",
 ]
 
 [tool.uv]
@@ -91,6 +94,7 @@ module = [
     "inkex.*",
     "fastmcp.prefab",
     "pillow_avif",
+    "scour.*",
 ]
 ignore_missing_imports = true
 

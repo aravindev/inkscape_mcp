@@ -75,17 +75,16 @@ def _stage_windows(svg_xml: str) -> None:
 def detect_session() -> str:
     """Return 'wayland', 'x11', or '' if no display is reachable.
 
-    Prefers Wayland when both env vars are present (Xwayland fallback would
-    still be usable but a native Wayland session should drive wl-copy).
+    Prefers wl-copy on a Wayland session, but falls through to xclip when
+    wl-clipboard isn't installed: Inkscape runs as an XWayland client there, so
+    an X11 clipboard reaches it fine. Without that fallback a stock Ubuntu 24.04
+    box (Wayland by default, and the documented apt line installs xclip) had
+    insert_svg permanently disabled despite a working clipboard path.
     """
-    if os.environ.get("WAYLAND_DISPLAY"):
-        if shutil.which("wl-copy"):
-            return "wayland"
-        return ""
-    if os.environ.get("DISPLAY"):
-        if shutil.which("xclip"):
-            return "x11"
-        return ""
+    if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
+        return "wayland"
+    if os.environ.get("DISPLAY") and shutil.which("xclip"):
+        return "x11"
     return ""
 
 
@@ -103,7 +102,10 @@ def stage_svg_fragment(svg_xml: str) -> None:
     else:
         # Distinguish "no display" from "display set but tool missing" for better diagnostics.
         if os.environ.get("WAYLAND_DISPLAY"):
-            raise RuntimeError("Wayland session detected but 'wl-copy' is not on PATH; install wl-clipboard.")
+            raise RuntimeError(
+                "Wayland session detected but neither 'wl-copy' nor an XWayland 'xclip' is on PATH; "
+                "install wl-clipboard (or xclip)."
+            )
         if os.environ.get("DISPLAY"):
             raise RuntimeError("X11 session detected but 'xclip' is not on PATH; install xclip.")
         raise RuntimeError("No graphical session reachable (neither $WAYLAND_DISPLAY nor $DISPLAY is set).")

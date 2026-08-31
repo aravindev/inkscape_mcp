@@ -130,7 +130,7 @@ Examples:
             "inkscape_system: System operations"
           ],
           "getting_started": [
-            "Ensure Inkscape 1.0+ is installed",
+            "Ensure Inkscape 1.4.x is installed",
             "Use inkscape_file for basic operations",
             "Use inkscape_vector for advanced vector editing"
           ]
@@ -232,6 +232,26 @@ def _server_version() -> str:
     from .. import __version__
 
     return __version__
+
+
+def _config_sources(config: Any) -> dict[str, dict[str, Any]]:
+    """Report where each tracked config value came from (env var, config file, default).
+
+    `load_config` stamps every tracked setting with a `Resolved(value, source, detail)`
+    on `config._sources`, but nothing ever surfaced it — so the documented
+    "reports which value came from which source" was not actually true of any op.
+    """
+    sources = getattr(config, "_sources", None)
+    if not sources:
+        return {}
+    return {
+        name: {
+            "value": str(resolved.value),
+            "source": str(resolved.source),
+            "detail": resolved.detail,
+        }
+        for name, resolved in sources.items()
+    }
 
 
 def _fastmcp_version() -> str:
@@ -363,6 +383,7 @@ async def inkscape_system(
                     "all_passed": all(checks.values()),
                     "issues": [k for k, v in checks.items() if not v],
                     "bridge": bridge,
+                    "config_sources": _config_sources(config),
                 },
                 execution_time_ms=(time.time() - start_time) * 1000,
             ).model_dump()
@@ -429,19 +450,33 @@ async def inkscape_system(
 
         elif operation == "help":
             # Provide help information
+            from ..mcp_tool_types import OPERATION_COUNTS as _counts
+
             help_info = {
                 "server": "Inkscape MCP Server",
                 "description": "Professional vector graphics and SVG editing through Model Context Protocol",
+                # All eight tools, not the four this used to list.
                 "tools": [
-                    "inkscape_file: Basic file operations (load, save, convert, info, validate, list_formats)",
-                    "inkscape_vector: Advanced vector ops (23 operations: trace, boolean, optimize, render, ...)",
-                    "inkscape_analysis: Document analysis (quality, statistics, validate, objects, dimensions)",
-                    "inkscape_system: System operations (status, help, diagnostics, version, config)",
+                    f"inkscape_file: File I/O ({_counts['inkscape_file']} ops: load, save, convert, "
+                    "info, validate, list_formats, batch_convert)",
+                    f"inkscape_vector: Vector editing ({_counts['inkscape_vector']} ops: trace, boolean, "
+                    "simplify, optimize, align, LPE, tile clones, ...)",
+                    f"inkscape_analysis: Read-only inspection ({_counts['inkscape_analysis']} ops: quality, "
+                    "statistics, validate, objects, dimensions, structure)",
+                    f"inkscape_system: Server ops ({_counts['inkscape_system']} ops: status, help, diagnostics, "
+                    "version, config, list_extensions, execute_extension)",
+                    f"inkscape_extension: Any installed inkex extension ({_counts['inkscape_extension']} ops: "
+                    "list, describe, run, run_live)",
+                    f"inkscape_gradient: Gradient stops, linear<->radial ({_counts['inkscape_gradient']} ops)",
+                    f"inkscape_metadata: Dublin-Core RDF metadata ({_counts['inkscape_metadata']} ops)",
+                    f"inkscape_live: Drive the running GUI over D-Bus ({_counts['inkscape_live']} ops: "
+                    "edit_xml, apply_action, path_edit, inspect_*, rasterize, ...)",
                 ],
                 "getting_started": [
-                    "Ensure Inkscape 1.0+ is installed",
-                    "Use inkscape_file for basic operations",
-                    "Use inkscape_vector for advanced vector editing",
+                    # `version` reports 1.4.x; this used to contradict it with "1.0+".
+                    "Ensure Inkscape 1.4.x is installed",
+                    "Use inkscape_live when Inkscape is running — it edits the open document in place",
+                    "Use inkscape_file / inkscape_vector for headless work on files",
                     "Use inkscape_analysis to understand your SVGs",
                 ],
             }

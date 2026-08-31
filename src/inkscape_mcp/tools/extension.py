@@ -561,6 +561,17 @@ async def _op_run_live(
 
     res = await _op_run(operation, target, params, str(scratch), str(scratch), start)
     if not res["success"]:
+        # "select at least one element" means the extension is a transformer: it wanted the
+        # live document and selection, but the params path only ever hands it a blank canvas.
+        # Say so, instead of surfacing a selection error the caller can't act on — they DID
+        # select something, just not somewhere this code path can see.
+        if "select at least one" in (res.get("error", "") + res.get("message", "")).lower():
+            res["message"] = (
+                f"{target} needs existing content and a selection, but run_live with params "
+                f"renders on an empty canvas. Call run_live with NO params (fires "
+                f"{target}.noprefs over D-Bus against the real document and selection), or "
+                f"use the headless 'run' operation on a file. Original error: {res.get('error', '')}"
+            )
         return res
 
     output_xml = scratch.read_text(encoding="utf-8")
@@ -668,11 +679,27 @@ async def inkscape_extension(
       describe    — show full param schema for one extension (``target`` = extension id)
       run         — invoke headlessly on a file (``target`` + ``params`` JSON +
                     ``input_path`` + optional ``output_path``)
-      run_live    — invoke on the running Inkscape doc (``target`` + ``params``). Empty params route
-                    via D-Bus and preserve undo. Provided params render on an empty canvas and
-                    append the output wrapped in `<g id="mcp-ext-…">`. Pass ``wrapper_id`` to
-                    re-render in place — any prior element with that id is removed first, so CSS
-                    rules / style hooks targeting the id keep applying.
+      run_live    — invoke on the running Inkscape doc (``target`` + ``params``).
+
+                    **Which path you get depends on whether you pass params, and they are
+                    not interchangeable:**
+
+                    - **No params** → fires ``<id>.noprefs`` over D-Bus against the real
+                      document and its real selection, as one undo entry. This is the ONLY
+                      path that works for *transformer* extensions — filters, drop shadow,
+                      blur, colour shifts, path effects. Select the target first with
+                      ``inkscape_live(operation="set_selection")``.
+                    - **With params** → renders the extension on an EMPTY canvas headlessly
+                      and appends the result wrapped in ``<g id="mcp-ext-…">``. The live
+                      document and selection are NOT passed in, so this suits *generator*
+                      extensions only (qr, barcode, calendar, gears, polyhedra, pdflatex).
+                      A transformer run this way produces empty output or fails with
+                      "select at least one element". Use the no-params path, or ``run``
+                      against a file, instead.
+
+                    Pass ``wrapper_id`` to re-render in place — any prior element with that
+                    id is removed first, so CSS rules / style hooks targeting the id keep
+                    applying.
     """
     start = time.perf_counter()
 

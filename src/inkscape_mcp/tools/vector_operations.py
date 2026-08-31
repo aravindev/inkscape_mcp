@@ -1,9 +1,10 @@
 """Advanced vector operations for Inkscape SVG documents.
 
 PORTMANTEAU PATTERN RATIONALE:
-Consolidates 23+ advanced vector operations into single interface. Prevents tool explosion
-while maintaining
-full functionality and improving discoverability. Follows FastMCP 2.14.1+ SOTA standards.
+Consolidates every advanced vector operation into a single interface. Prevents tool explosion
+while maintaining full functionality and improving discoverability. The authoritative
+operation list is the ``InkscapeVectorOperation`` Literal in ``mcp_tool_types``; counts
+advertised to clients derive from it via ``OPERATION_COUNTS`` rather than being restated here.
 
 SUPPORTED OPERATIONS:
 - trace_image: Convert raster images to vector paths
@@ -131,7 +132,7 @@ Examples:
     )
 
 PREREQUISITES:
-- Requires Inkscape CLI installation (1.0+ recommended, 1.2+ for Actions API)
+- Requires an Inkscape 1.4.x CLI installation (the supported line; Actions API)
 - For boolean operations: Requires object IDs or select_all parameter
 - For path operations: Requires valid SVG path elements
 
@@ -369,6 +370,24 @@ def _local_tag(elem: Any) -> str:
     return tag.split("}", 1)[1] if "}" in tag else tag
 
 
+def _count_layers(path: str) -> int:
+    """Count Inkscape layers (`<g inkscape:groupmode="layer">`), or 0 if unparseable."""
+    try:
+        root = etree.parse(path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return 0
+    return sum(1 for g in root.iter(f"{SVG}g") if g.get(f"{INK}groupmode") == "layer")
+
+
+def _count_path_elements(path: str) -> int:
+    """Count `<path>` elements in an SVG, or -1 if it can't be parsed."""
+    try:
+        root = etree.parse(path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return -1
+    return sum(1 for _ in root.iter(f"{SVG}path"))
+
+
 async def inkscape_vector(
     operation: InkscapeVectorOperation,
     input_path: str = "",
@@ -386,7 +405,19 @@ async def inkscape_vector(
 
     try:
         if operation == "trace_image":
-            return await _trace_image(input_path, output_path, cli_wrapper, config)
+            return await _trace_image(
+                input_path,
+                output_path,
+                cli_wrapper,
+                config,
+                scans=kwargs.get("trace_scans", 4),
+                smooth=kwargs.get("trace_smooth", True),
+                stack=kwargs.get("trace_stack", True),
+                remove_background=kwargs.get("trace_remove_background", False),
+                speckles=kwargs.get("trace_speckles", 2),
+                smooth_corners=kwargs.get("trace_smooth_corners", 1.0),
+                optimize=kwargs.get("trace_optimize", 0.2),
+            )
 
         elif operation == "generate_barcode_qr":
             return await _generate_barcode_qr(kwargs.get("barcode_data", ""), output_path, cli_wrapper, config)
@@ -623,23 +654,25 @@ async def inkscape_vector(
             )
 
         elif operation == "align":
-            return await _simple_action_op(
+            return await _align_or_distribute(
                 operation,
+                operation_type,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-align"],
-                cli_wrapper=cli_wrapper,
-                config=config,
+                object_ids,
+                cli_wrapper,
+                config,
             )
 
         elif operation == "distribute":
-            return await _simple_action_op(
+            return await _align_or_distribute(
                 operation,
+                operation_type,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-distribute"],
-                cli_wrapper=cli_wrapper,
-                config=config,
+                object_ids,
+                cli_wrapper,
+                config,
             )
 
         elif operation == "ungroup":
@@ -807,16 +840,45 @@ async def inkscape_vector(
         ).model_dump()
 
 
-async def _trace_image(input_path: str, output_path: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
+async def _trace_image(
+    input_path: str,
+    output_path: str,
+    cli_wrapper: Any,
+    config: Any,
+    scans: int = 4,
+    smooth: bool = True,
+    stack: bool = True,
+    remove_background: bool = False,
+    speckles: int = 2,
+    smooth_corners: float = 1.0,
+    optimize: float = 0.2,
+) -> dict[str, Any]:
     """Trace bitmap image to vector paths using potrace."""
     start = time.time()
     try:
         # `selection-create-bitmap-copies` / `selection-trace` / `file-save-as` do not exist
         # in 1.4; the trace verb is `object-trace`. The input file is already passed as the
         # positional argument, so `file-open:` is redundant.
+        #
+        # object-trace REQUIRES its full argument tuple. Fired bare it printed
+        # "expected argument format" to stderr, exited 0, and exported the untraced
+        # bitmap re-wrapped in an <image> — zero paths, reported as success. Note
+        # smooth_corners/optimize are parsed with stod, so they must render as floats
+        # ("1" fails with "parsing arguments failed: stod").
+        trace_args = ",".join(
+            [
+                str(int(scans)),
+                "true" if smooth else "false",
+                "true" if stack else "false",
+                "true" if remove_background else "false",
+                str(int(speckles)),
+                str(float(smooth_corners)),
+                str(float(optimize)),
+            ]
+        )
         actions = [
             _SELECT_OBJECTS,
-            "object-trace",
+            f"object-trace:{trace_args}",
             f"export-filename:{output_path}",
             "export-type:svg",
             "export-do",
@@ -829,11 +891,33 @@ async def _trace_image(input_path: str, output_path: str, cli_wrapper: Any, conf
             timeout=config.process_timeout,
         )
 
+        # The trace can still come back empty (blank source, everything below the speckle
+        # floor). Report that rather than handing back an <image>-only "vector" file.
+        paths_written = _count_path_elements(output_path)
+        if paths_written == 0:
+            return VectorOperationResult(
+                success=False,
+                operation="trace_image",
+                message=(
+                    f"Trace produced no paths for {input_path}; the export contains only the "
+                    f"source bitmap. Try more scans or fewer speckles."
+                ),
+                data={"input_path": input_path, "output_path": output_path, "trace_args": trace_args},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="no paths traced",
+            ).model_dump()
+
         return VectorOperationResult(
             success=True,
             operation="trace_image",
-            message=f"Traced bitmap {input_path} to vector {output_path}",
-            data={"input_path": input_path, "output_path": output_path, "method": "potrace"},
+            message=f"Traced bitmap {input_path} to vector {output_path} ({paths_written} path(s))",
+            data={
+                "input_path": input_path,
+                "output_path": output_path,
+                "method": "potrace",
+                "paths": paths_written,
+                "trace_args": trace_args,
+            },
             execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()
 
@@ -1001,49 +1085,51 @@ async def _generate_laser_dot(output_path: str, x: float, y: float, cli_wrapper:
 async def _measure_object(input_path: str, object_id: str, cli_wrapper: Any, config: Any) -> dict[str, Any]:
     """Measure object dimensions."""
     start = time.time()
+    if not object_id:
+        return VectorOperationResult(
+            success=False,
+            operation="measure_object",
+            message="object_id is required; use query_document for whole-drawing dimensions",
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
+            error="missing object_id",
+        ).model_dump()
     try:
-        # Use Inkscape's query functions
-        x_result = await cli_wrapper._execute_command(
+        # `--query-x=<id>` is NOT the CLI syntax — the id belongs in `--query-id`, and the
+        # four coordinate flags are bare switches. Passing the id to `--query-x` made
+        # Inkscape ignore it and answer for the whole drawing, so every object in a
+        # document measured identically. All four flags also answer in one invocation,
+        # which drops this from four Inkscape launches to one.
+        stdout, stderr = await cli_wrapper._execute_command_capture(
             [
                 str(config.inkscape_executable),
                 "--app-id-tag=mcp",
                 input_path,
-                f"--query-x={object_id}",
-            ],
-            config.process_timeout,
-        )
-        y_result = await cli_wrapper._execute_command(
-            [
-                str(config.inkscape_executable),
-                "--app-id-tag=mcp",
-                input_path,
-                f"--query-y={object_id}",
-            ],
-            config.process_timeout,
-        )
-        width_result = await cli_wrapper._execute_command(
-            [
-                str(config.inkscape_executable),
-                "--app-id-tag=mcp",
-                input_path,
-                f"--query-width={object_id}",
-            ],
-            config.process_timeout,
-        )
-        height_result = await cli_wrapper._execute_command(
-            [
-                str(config.inkscape_executable),
-                "--app-id-tag=mcp",
-                input_path,
-                f"--query-height={object_id}",
+                "--query-id",
+                object_id,
+                "--query-x",
+                "--query-y",
+                "--query-width",
+                "--query-height",
             ],
             config.process_timeout,
         )
 
-        x = float(x_result.strip())
-        y = float(y_result.strip())
-        width = float(width_result.strip())
-        height = float(height_result.strip())
+        # A missing id is a stderr warning + a silent fall back to the drawing bbox.
+        if "Did not find object with id" in stderr:
+            return VectorOperationResult(
+                success=False,
+                operation="measure_object",
+                message=f"No object with id {object_id!r} in {input_path}",
+                data={"object_id": object_id},
+                execution_time_ms=(time.time() - start) * 1000,
+                error="object not found",
+            ).model_dump()
+
+        values = [line for line in stdout.splitlines() if line.strip()]
+        if len(values) < 4:
+            raise ValueError(f"expected 4 query values, got {values!r}")
+        x, y, width, height = (float(v.strip()) for v in values[:4])
 
         return VectorOperationResult(
             success=True,
@@ -1398,6 +1484,75 @@ async def _render_preview(input_path: str, output_path: str, dpi: int, cli_wrapp
         ).model_dump()
 
 
+_ALIGN_POSITIONS = frozenset({"left", "hcenter", "right", "top", "vcenter", "bottom"})
+_ALIGN_ANCHORS = frozenset({"last", "first", "biggest", "smallest", "page", "drawing", "selection", "pref"})
+_DISTRIBUTE_MODES = frozenset({"hgap", "left", "hcenter", "right", "vgap", "top", "vcenter", "bottom"})
+
+
+async def _align_or_distribute(
+    operation: str,
+    operation_type: str,
+    input_path: str,
+    output_path: str,
+    object_ids: list[str] | None,
+    cli_wrapper: Any,
+    config: Any,
+) -> dict[str, Any]:
+    """Align or distribute the selection along `operation_type`.
+
+    Both `object-align` and `object-distribute` REQUIRE an argument. Fired bare they
+    print "expected argument format" to stderr, exit 0, and leave the drawing
+    untouched — which is exactly what these two operations used to do.
+    """
+    start = time.time()
+
+    if operation == "align":
+        tokens = operation_type.split()
+        positions = [t for t in tokens if t in _ALIGN_POSITIONS]
+        unknown = [t for t in tokens if t not in _ALIGN_POSITIONS | _ALIGN_ANCHORS]
+        valid = bool(positions) and not unknown
+        expected = (
+            "one or two positions (left|hcenter|right and/or top|vcenter|bottom), "
+            "optionally followed by an anchor (last|first|biggest|smallest|page|drawing|selection|pref) "
+            "— e.g. 'top', 'left', 'hcenter vcenter', 'top page'"
+        )
+        action = "object-align"
+    else:
+        tokens = operation_type.split()
+        valid = len(tokens) == 1 and tokens[0] in _DISTRIBUTE_MODES
+        expected = "exactly one of hgap|left|hcenter|right|vgap|top|vcenter|bottom — e.g. 'hgap'"
+        action = "object-distribute"
+
+    if not valid:
+        return VectorOperationResult(
+            success=False,
+            operation=operation,
+            message=(
+                f"{operation} requires operation_type to be {expected}; got {operation_type!r}"
+                if operation_type
+                else f"{operation} requires operation_type: {expected}"
+            ),
+            data={},
+            execution_time_ms=(time.time() - start) * 1000,
+            error="invalid operation_type",
+        ).model_dump()
+
+    select_action = f"select-by-id:{','.join(object_ids)}" if object_ids else _SELECT_OBJECTS
+    result = await _simple_action_op(
+        operation,
+        input_path,
+        output_path,
+        actions=[select_action, f"{action}:{operation_type}"],
+        cli_wrapper=cli_wrapper,
+        config=config,
+    )
+    if result.get("success"):
+        result["message"] = f"Applied {operation} '{operation_type}' to {input_path}"
+        result["data"]["operation_type"] = operation_type
+        result["data"]["object_ids"] = object_ids or "all"
+    return result
+
+
 async def _apply_boolean(
     boolean_type: str,
     input_path: str,
@@ -1665,6 +1820,30 @@ def _strip_unit(raw: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
+def _run_scour(path: str) -> None:
+    """Minify `path` in place with scour.
+
+    `scour_svg` used to be a pure alias of `optimize_svg` — identical action chain,
+    byte-identical output — while scour itself was never imported. Inkscape's
+    plain-SVG export pretty-prints one attribute per line, so "optimizing" a small
+    file reliably made it *bigger*; this is the pass that actually shrinks it.
+    """
+    from scour import scour
+
+    options = scour.generateDefaultOptions()
+    options.remove_metadata = True
+    options.strip_comments = True
+    options.strip_xml_prolog = False
+    options.enable_viewboxing = False  # keep width/height — callers rely on them
+    options.shorten_ids = False  # ids are the addressing scheme for every other op
+    options.indent_type = "none"
+    options.newlines = False
+    options.digits = 5
+
+    original = Path(path).read_text(encoding="utf-8")
+    Path(path).write_text(scour.scourString(original, options), encoding="utf-8")
+
+
 async def _optimize_svg(
     operation: str,
     input_path: str,
@@ -1678,6 +1857,9 @@ async def _optimize_svg(
 
     Inkscape 1.4 has no `file-vacuum-defs` action, so the unreferenced-defs sweep is done
     here in lxml after the export.
+
+    `scour_svg` additionally runs the file through scour to actually minify it;
+    `optimize_svg` stops after the plain-SVG export and the defs sweep.
     """
     start = time.time()
     if not output_path:
@@ -1691,6 +1873,9 @@ async def _optimize_svg(
         ).model_dump()
     try:
         size_before = Path(input_path).stat().st_size
+        # Plain-SVG export drops the whole inkscape: namespace, which silently demotes every
+        # layer to a bare <g>. That is the point of "plain SVG", but callers should be told.
+        layers_before = _count_layers(input_path)
         await cli_wrapper._execute_actions(
             input_path=input_path,
             actions=["export-plain-svg", f"export-filename:{output_path}", "export-type:svg", "export-do"],
@@ -1702,13 +1887,23 @@ async def _optimize_svg(
         if vacuum_defs:
             removed = _vacuum_unused_defs(output_path)
 
+        scoured = operation == "scour_svg"
+        if scoured:
+            _run_scour(output_path)
+
         size_after = Path(output_path).stat().st_size
         return VectorOperationResult(
             success=True,
             operation=operation,
             message=(
                 f"Optimized {input_path} → {output_path} "
-                f"({size_before} → {size_after} bytes, {removed} unused def(s) removed)"
+                f"({size_before} → {size_after} bytes, {removed} unused def(s) removed"
+                f"{', scoured' if scoured else ''})"
+                + (
+                    f". Plain-SVG export demoted {layers_before} Inkscape layer(s) to plain groups."
+                    if layers_before
+                    else ""
+                )
             ),
             data={
                 "input_path": input_path,
@@ -1716,6 +1911,8 @@ async def _optimize_svg(
                 "bytes_before": size_before,
                 "bytes_after": size_after,
                 "unused_defs_removed": removed,
+                "scoured": scoured,
+                "layers_demoted": layers_before,
             },
             execution_time_ms=(time.time() - start) * 1000,
         ).model_dump()

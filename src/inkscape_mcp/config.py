@@ -20,6 +20,7 @@ class ConfigSource(StrEnum):
     CLI_FLAG = "cli_flag"
     ENV_VAR = "env_var"
     CONFIG_FILE = "config_file"
+    AUTO_DETECTED = "auto_detected"
     DEFAULT = "default"
 
 
