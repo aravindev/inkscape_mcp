@@ -35,7 +35,10 @@ jobs:
           enable-cache: true
       - run: uv sync --all-extras --dev
       - run: uv run ruff check .
-      - run: uv run pytest tests/ -m "not network" -q --tb=short --ignore=tests/test_inkscape_live.py
+      - run: >
+          uv run pytest tests/ -m "not network" -q --tb=short
+          --ignore=tests/test_inkscape_live.py
+          --ignore=tests/live
 
   build:
     name: Build distribution

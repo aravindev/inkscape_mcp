@@ -361,6 +361,47 @@ _STYLE_PROPS = (
 )
 
 
+def _document_identity(root) -> dict:
+    """Identify the document this extension ran against.
+
+    Reports only what is actually knowable. `sodipodi:docname` is the filename Inkscape
+    shows in the title bar; `path` is set ONLY when that is already absolute.
+
+    Resolving a bare docname against the working directory is tempting and wrong: an
+    Inkscape extension inherits its CWD from the extension install directory, so that
+    produces a confident, plausible, entirely fictional path — which is precisely the
+    failure mode this field exists to prevent.
+    """
+    docname = _attr(root, "sodipodi:docname") or ""
+    path = docname if docname.startswith("/") or (len(docname) > 2 and docname[1] == ":") else ""
+    return {
+        "docname": docname,
+        "path": path,
+        "root_id": root.get("id") or "",
+    }
+
+
+def _style_declarations(elem) -> dict:
+    """Parse the element's inline ``style=""`` into {property: value}.
+
+    Deliberately a plain parse rather than inkex.Style: we need to know which
+    properties are *actually declared*, and inkex.Style answers for every property by
+    falling back to SVG defaults. Values containing ':' (e.g. ``url(...)``) are
+    preserved by splitting on the first colon only.
+    """
+    raw = elem.get("style") or ""
+    out: dict = {}
+    for decl in raw.split(";"):
+        if ":" not in decl:
+            continue
+        name, _, value = decl.partition(":")
+        name = name.strip()
+        value = value.strip()
+        if name and value:
+            out[name] = value
+    return out
+
+
 def _inspect_element(svg, root, spec) -> dict:
     """Per-element analytical query — geometric + computed style + structure.
 
@@ -386,22 +427,35 @@ def _inspect_element(svg, root, spec) -> dict:
             "error": f"no element with id {target!r}",
         }
 
-    # Computed style — for each property, prefer the *presentation attribute*
-    # (e.g. `fill="#1f1f1f"`) over inkex.Style's value, because inkex.Style
-    # 1.x only reads from the `style=""` CSS string and reports the SVG
-    # *default* for properties set via presentation attributes. The renderer
-    # actually paints whatever the cascade resolves to — presentation attrs
-    # beat defaults — so the agent needs the attribute value when it exists.
+    # Computed style, in CSS cascade order.
+    #
+    # An inline `style=""` declaration outranks the equivalent presentation attribute,
+    # so `style` is consulted FIRST — but only for properties that literally appear in
+    # the style string. That caveat is the whole reason this used to be the other way
+    # round: inkex.Style 1.x reports the SVG *default* for any property it doesn't
+    # find, so asking it blindly would let a default (`fill: black`) beat a real
+    # presentation attribute (`fill="#cc3333"`).
+    #
+    # Getting the order wrong is not cosmetic. Anything an Inkscape colour extension
+    # touches ends up with both forms — e.g. `fill="#eeaa22" style="fill:#1155dd"` —
+    # and the old order reported #eeaa22 while the renderer painted #1155dd.
     computed: dict = {}
     try:
         style = elem.style  # inkex.Style — reads style="..." only
     except Exception:
         style = None
 
+    declared = _style_declarations(elem)
+
     for prop in _STYLE_PROPS:
-        # 1. presentation attribute on the element itself
-        value = elem.get(prop)
-        # 2. inkex Style (the style="..." CSS string)
+        value = None
+        # 1. inline style="..." — highest precedence, but only if actually declared.
+        if prop in declared:
+            value = declared[prop]
+        # 2. presentation attribute on the element itself.
+        if value is None or value == "":
+            value = elem.get(prop)
+        # 3. inkex.Style, which fills in inherited values and SVG defaults.
         if (value is None or value == "") and style is not None:
             try:
                 value = style(prop) if callable(style) else style.get(prop)
@@ -505,6 +559,14 @@ class McpInspect(inkex.EffectExtension):
             result = handler(self.svg, root, spec)
         else:
             result = handler(self.svg, root)
+
+        # Which document did this actually run against? Inkscape hands an effect
+        # extension the ACTIVE desktop's document, and there is no way to ask for a
+        # different one — 1.4 has no focus-window action. So rather than pretend
+        # `window_id` routes, every result names the document it touched and the MCP
+        # side turns `window_id` into an assertion against it.
+        if isinstance(result, dict):
+            result["active_document"] = _document_identity(root)
         _write_result(result)
 
 

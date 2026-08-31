@@ -331,8 +331,10 @@ Errors:
         - Check if operation is available in newer Inkscape versions
 """
 
+import hashlib
 import re
 import time
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -340,10 +342,12 @@ from lxml import etree
 from pydantic import BaseModel
 
 from ..mcp_tool_types import InkscapeVectorOperation
+from .dimensions import size_report
 
 SVG_NS = "http://www.w3.org/2000/svg"
 SVG = f"{{{SVG_NS}}}"
 INK = "{http://www.inkscape.org/namespaces/inkscape}"
+SODIPODI = "{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}"
 
 # `select-all:all` includes groups AND layers, so a per-object action ends up applied to the
 # enclosing layer <g> and silently no-ops. The bare form defaults to 'no-groups' — every
@@ -351,6 +355,191 @@ INK = "{http://www.inkscape.org/namespaces/inkscape}"
 _SELECT_OBJECTS = "select-all"
 
 _SHAPE_TAGS = frozenset({"rect", "circle", "ellipse", "line", "polyline", "polygon", "path", "text", "image", "use"})
+
+
+class Scope(Enum):
+    """How an operation relates to `object_id` / `object_ids`.
+
+    OBJECTS  — acts on the given objects; falls back to the whole drawing when none
+               are named. Passing ids used to be silently ignored, which turned
+               "convert this circle" into "convert every object in the document".
+    PAGE     — acts on the page or document as a whole. Ids are meaningless here, so
+               they are refused rather than accepted and dropped.
+    EXACTLY_N — Inkscape requires a precise number of selected objects (path-division
+               and path-cut need two). With the wrong count the underlying action
+               silently does nothing, so the count is validated up front.
+    """
+
+    OBJECTS = "objects"
+    PAGE = "page"
+    EXACTLY_N = "exactly_n"
+
+
+# Operations not listed default to Scope.OBJECTS with no count requirement.
+_OP_SCOPE: dict[str, tuple[Scope, int | None]] = {
+    # Exactly-N: Inkscape's own requirement, not ours.
+    "path_division": (Scope.EXACTLY_N, 2),
+    "path_cut": (Scope.EXACTLY_N, 2),
+    "path_fill_between": (Scope.EXACTLY_N, 2),
+    # Page / document scoped — ids cannot narrow these.
+    "page_rotate": (Scope.PAGE, None),
+    "set_document_units": (Scope.PAGE, None),
+    "fit_canvas_to_drawing": (Scope.PAGE, None),
+    "optimize_svg": (Scope.PAGE, None),
+    "scour_svg": (Scope.PAGE, None),
+    "path_clean": (Scope.PAGE, None),
+    "export_dxf": (Scope.PAGE, None),
+    "layers_to_files": (Scope.PAGE, None),
+    "render_preview": (Scope.PAGE, None),
+    "query_document": (Scope.PAGE, None),
+    "construct_svg": (Scope.PAGE, None),
+    "generate_barcode_qr": (Scope.PAGE, None),
+    "generate_laser_dot": (Scope.PAGE, None),
+    "trace_image": (Scope.PAGE, None),
+}
+
+# Operations Inkscape cannot perform without a GUI desktop. Verified against 1.4.4:
+# `path-outset` / `path-inset` / `path-offset` are all inert via the CLI, and the Offset
+# LPE never recomputes on a headless export — not even when forced through
+# `object-to-path`. Returning a wrong-but-plausible document is worse than refusing.
+_REQUIRES_GUI: dict[str, str] = {
+    "path_offset": (
+        "path_offset needs a running Inkscape GUI: Inkscape's offset actions and the "
+        "Offset LPE do not compute headlessly. Open the document and use "
+        "inkscape_live(operation='path_offset', target=<path-id>, payload='{\"offset\": N}'). "
+        "For a uniform scale of the selection instead, use scale_selection."
+    ),
+    "lpe_paste": (
+        "lpe_paste needs a running Inkscape GUI: it pastes from the live clipboard, which "
+        "does not exist headlessly. Pass source_id + object_ids to copy a path effect "
+        "between objects, or use inkscape_live for the clipboard-backed behaviour."
+    ),
+    # Verified headlessly: `text-put-on-path` produces no <textPath> under any selection
+    # chain (both ids at once, sequential additive selects, or select-clear first).
+    "text_on_path": (
+        "text_on_path needs a running Inkscape GUI: Inkscape's text-put-on-path action "
+        "produces no <textPath> headlessly under any selection order. Open the document "
+        "and drive it via inkscape_live, or author the <textPath> directly with "
+        "inkscape_live(operation='edit_xml')."
+    ),
+    # Verified headlessly: the path-to-mesh extension emits no <meshgradient> off-GUI.
+    "create_mesh_gradient": (
+        "create_mesh_gradient needs a running Inkscape GUI: the path-to-mesh extension "
+        "produces no <meshgradient> headlessly. Open the document and use inkscape_live."
+    ),
+}
+
+# Renamed operations: old name -> message naming the replacement(s).
+_RENAMED: dict[str, str] = {
+    "path_inset_outset": (
+        "path_inset_outset never offset a path outline — it fired transform-grow, which "
+        "uniformly scales the selection so its bounding box grows by the given amount. "
+        "Use scale_selection for that behaviour, or path_offset (GUI only) for a true "
+        "outline offset."
+    ),
+}
+
+
+# Attributes Inkscape rewrites on every export regardless of what the actions did.
+_BOOKKEEPING_ATTRS = frozenset(
+    {
+        f"{INK}version",
+        f"{INK}cx",
+        f"{INK}cy",
+        f"{INK}zoom",
+        f"{INK}current-layer",
+        f"{INK}window-width",
+        f"{INK}window-height",
+        f"{INK}window-x",
+        f"{INK}window-y",
+        f"{INK}window-maximized",
+        f"{SODIPODI}docname",
+    }
+)
+
+
+def _doc_fingerprint(path: str) -> str | None:
+    """Digest of the drawing's content, ignoring Inkscape's reserialisation.
+
+    A byte comparison is useless here: exporting through Inkscape rewrites the file
+    even when the actions did nothing — it adds `sodipodi:docname`, an `id` on the
+    root, an empty `<defs>`, a `<sodipodi:namedview>` block and namespace declarations,
+    and reflows all the whitespace. Every operation would look like it had changed
+    something.
+
+    So walk the tree instead and digest what a reader would actually see: each drawable
+    element's depth, tag and attributes. Depth matters — it is what distinguishes a
+    successful `ungroup` (children promoted a level) from a no-op one, since the set of
+    elements is identical either way.
+
+    Returns None when the file can't be parsed; callers treat that as "can't tell" and
+    skip the check rather than inventing a failure.
+    """
+    try:
+        root = etree.parse(path).getroot()
+    except (OSError, etree.XMLSyntaxError):
+        return None
+
+    parts: list[str] = []
+    # Page geometry lives on the root and is the whole point of page_rotate /
+    # fit_canvas_to_drawing, so it is part of the content even though the root's other
+    # attributes are bookkeeping.
+    for attr in ("width", "height", "viewBox"):
+        parts.append(f"@{attr}={root.get(attr, '')}")
+
+    def walk(elem: Any, depth: int) -> None:
+        for child in elem:
+            if not isinstance(child.tag, str):
+                continue  # comments / processing instructions
+            qname = etree.QName(child)
+            local = qname.localname
+            if local == "namedview" or local == "metadata":
+                continue
+            if local == "defs" and len(child) == 0:
+                continue  # Inkscape adds an empty <defs> to every export
+            attrs = sorted(f"{k}={v}" for k, v in child.attrib.items() if k not in _BOOKKEEPING_ATTRS)
+            text = (child.text or "").strip()
+            parts.append(f"{depth}:{qname.namespace}:{local}:{'|'.join(attrs)}:{text}")
+            walk(child, depth + 1)
+
+    walk(root, 1)
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def _resolve_ids(object_id: str, object_ids: list[str] | None) -> list[str]:
+    """Collapse the two id-carrying parameters into one list, preserving order."""
+    if object_ids:
+        return [i for i in object_ids if i]
+    return [object_id] if object_id else []
+
+
+def _scope_error(operation: str, object_id: str, object_ids: list[str] | None) -> str | None:
+    """Validate id arguments against the operation's scope. Returns a message on refusal."""
+    scope, required = _OP_SCOPE.get(operation, (Scope.OBJECTS, None))
+    ids = _resolve_ids(object_id, object_ids)
+
+    if scope is Scope.PAGE and ids:
+        param = "object_ids" if object_ids else "object_id"
+        return (
+            f"{operation} operates on the page/document as a whole and cannot be scoped to {param}; drop the argument."
+        )
+    if scope is Scope.EXACTLY_N and ids and len(ids) != required:
+        return (
+            f"{operation} requires exactly {required} object_ids (Inkscape silently does "
+            f"nothing with any other count); got {len(ids)}: {ids}"
+        )
+    return None
+
+
+def _select_action(object_id: str = "", object_ids: list[str] | None = None) -> str:
+    """Build the selection action, narrowing to ids when any were supplied.
+
+    Mirrors what `_align_or_distribute` and `_apply_boolean` already do — those two were
+    the only operations honouring ids, which is why they were also the only ones that
+    reliably did what they were asked.
+    """
+    ids = _resolve_ids(object_id, object_ids)
+    return f"select-by-id:{','.join(ids)}" if ids else _SELECT_OBJECTS
 
 
 class VectorOperationResult(BaseModel):
@@ -402,6 +591,31 @@ async def inkscape_vector(
 ) -> dict[str, Any]:
     """Inkscape vector operations portmanteau tool."""
     start_time = time.time()
+
+    # Refuse before doing any work: a renamed operation, one that cannot run without a
+    # GUI, or id arguments the operation can't honour. Each of these used to produce a
+    # cheerful success over an unchanged document.
+    for table, err in ((_RENAMED, "renamed operation"), (_REQUIRES_GUI, "requires GUI")):
+        if operation in table:
+            return VectorOperationResult(
+                success=False,
+                operation=operation,
+                message=table[operation],
+                data={},
+                execution_time_ms=(time.time() - start_time) * 1000,
+                error=err,
+            ).model_dump()
+
+    scope_problem = _scope_error(operation, object_id, object_ids)
+    if scope_problem:
+        return VectorOperationResult(
+            success=False,
+            operation=operation,
+            message=scope_problem,
+            data={},
+            execution_time_ms=(time.time() - start_time) * 1000,
+            error="invalid scope",
+        ).model_dump()
 
     try:
         if operation == "trace_image":
@@ -471,7 +685,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-to-path"],
+                actions=[_select_action(object_id, object_ids), "object-to-path"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -493,7 +707,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "fit-canvas-to-selection"],
+                actions=[_select_action(object_id, object_ids), "fit-canvas-to-selection"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -503,7 +717,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "path-combine"],
+                actions=[_select_action(object_id, object_ids), "path-combine"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -514,7 +728,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "org.inkscape.meshes.path-to-mesh.noprefs"],
+                actions=[_select_action(object_id, object_ids), "org.inkscape.meshes.path-to-mesh.noprefs"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -527,7 +741,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "path-break-apart"],
+                actions=[_select_action(object_id, object_ids), "path-break-apart"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -550,17 +764,20 @@ async def inkscape_vector(
         elif operation == "layers_to_files":
             return await _layers_to_files(input_path, kwargs.get("output_dir", "") or output_path, cli_wrapper, config)
 
-        elif operation == "path_inset_outset":
-            # `path-inset` / `path-outset` don't exist in 1.4. `transform-grow:<n>` is the
-            # action form: positive grows (outset), negative shrinks (inset).
+        elif operation == "scale_selection":
+            # `transform-grow:<n>` scales the selection so its bounding box grows by n
+            # in total (n/2 per side), preserving shape and aspect ratio. This is NOT a
+            # path inset/outset — the old `path_inset_outset` name claimed it was, and
+            # now fails with a pointer here (see _RENAMED).
             offset = float(kwargs.get("offset", 1.0))
             return await _simple_action_op(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, f"transform-grow:{offset:g}"],
+                actions=[_select_action(object_id, object_ids), f"transform-grow:{offset:g}"],
                 cli_wrapper=cli_wrapper,
                 config=config,
+                noop_hint="transform-grow needs a non-empty selection; check object_ids",
             )
 
         elif operation == "path_division":
@@ -568,7 +785,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "path-division"],
+                actions=[_select_action(object_id, object_ids), "path-division"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -578,7 +795,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "path-cut"],
+                actions=[_select_action(object_id, object_ids), "path-cut"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -588,7 +805,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "path-split"],
+                actions=[_select_action(object_id, object_ids), "path-split"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -598,7 +815,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "path-fill-between-paths"],
+                actions=[_select_action(object_id, object_ids), "path-fill-between-paths"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -608,7 +825,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-stroke-to-path"],
+                actions=[_select_action(object_id, object_ids), "object-stroke-to-path"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -618,7 +835,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-flip-horizontal"],
+                actions=[_select_action(object_id, object_ids), "object-flip-horizontal"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -628,7 +845,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-flip-vertical"],
+                actions=[_select_action(object_id, object_ids), "object-flip-vertical"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -638,7 +855,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-rotate-90-cw"],
+                actions=[_select_action(object_id, object_ids), "object-rotate-90-cw"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -648,7 +865,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-rotate-90-ccw"],
+                actions=[_select_action(object_id, object_ids), "object-rotate-90-ccw"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -680,7 +897,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "selection-ungroup"],
+                actions=[_select_action(object_id, object_ids), "selection-ungroup"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -690,7 +907,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "clone"],
+                actions=[_select_action(object_id, object_ids), "clone"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -700,7 +917,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "clone-unlink"],
+                actions=[_select_action(object_id, object_ids), "clone-unlink"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -710,7 +927,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-to-marker"],
+                actions=[_select_action(object_id, object_ids), "object-to-marker"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -720,7 +937,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-to-pattern"],
+                actions=[_select_action(object_id, object_ids), "object-to-pattern"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -761,7 +978,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "page-fit-to-selection"],
+                actions=[_select_action(object_id, object_ids), "page-fit-to-selection"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -783,7 +1000,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "object-add-corners-lpe"],
+                actions=[_select_action(object_id, object_ids), "object-add-corners-lpe"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -793,7 +1010,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "remove-path-effect"],
+                actions=[_select_action(object_id, object_ids), "remove-path-effect"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -803,7 +1020,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "paste-path-effect"],
+                actions=[_select_action(object_id, object_ids), "paste-path-effect"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -813,7 +1030,7 @@ async def inkscape_vector(
                 operation,
                 input_path,
                 output_path,
-                actions=[_SELECT_OBJECTS, "clone-link-lpe"],
+                actions=[_select_action(object_id, object_ids), "clone-link-lpe"],
                 cli_wrapper=cli_wrapper,
                 config=config,
             )
@@ -1161,17 +1378,9 @@ async def _query_document(input_path: str, cli_wrapper: Any, config: Any) -> dic
     """Query document information."""
     start = time.time()
     try:
-        width_result = await cli_wrapper._execute_command(
-            [str(config.inkscape_executable), "--app-id-tag=mcp", input_path, "--query-width"],
-            config.process_timeout,
-        )
-        height_result = await cli_wrapper._execute_command(
-            [str(config.inkscape_executable), "--app-id-tag=mcp", input_path, "--query-height"],
-            config.process_timeout,
-        )
-
-        width = float(width_result.strip())
-        height = float(height_result.strip())
+        # Page and drawing-bbox sizes are different numbers; this used to report only
+        # the latter as bare "width"/"height". See tools/dimensions.py.
+        report = await size_report(input_path, cli_wrapper, config)
 
         # Real counts from the XML rather than the previous hardcoded 1/1.
         root = etree.parse(input_path).getroot()
@@ -1185,8 +1394,7 @@ async def _query_document(input_path: str, cli_wrapper: Any, config: Any) -> dic
             operation="query_document",
             message=f"Queried document {input_path}: {num_objects} object(s), {num_layers} layer(s)",
             data={
-                "width": width,
-                "height": height,
+                **report,
                 "num_objects": num_objects,
                 "num_layers": num_layers,
                 "num_groups": num_groups,
@@ -1409,8 +1617,19 @@ async def _simple_action_op(
     actions: list[str],
     cli_wrapper: Any,
     config: Any,
+    expect_change: bool = True,
+    noop_hint: str = "",
 ) -> dict[str, Any]:
-    """Apply a chained list of Inkscape actions, write to output_path."""
+    """Apply a chained list of Inkscape actions, write to output_path.
+
+    Inkscape exits 0 whether or not an action did anything — a wrong selection, an
+    unmet object-count requirement or a GUI-only action all leave the drawing untouched
+    and still produce an output file. So the drawing is fingerprinted before and after
+    and an unchanged result is reported as a failure.
+
+    Set `expect_change=False` for operations where "nothing to do" is a legitimate
+    outcome (e.g. cleaning an already-clean file).
+    """
     start = time.time()
     if not output_path:
         return VectorOperationResult(
@@ -1422,6 +1641,7 @@ async def _simple_action_op(
             error="ValueError",
         ).model_dump()
     try:
+        before = _doc_fingerprint(input_path) if expect_change else None
         full_actions = [*list(actions), f"export-filename:{output_path}", "export-type:svg", "export-do"]
         await cli_wrapper._execute_actions(
             input_path=input_path,
@@ -1429,6 +1649,27 @@ async def _simple_action_op(
             output_path=output_path,
             timeout=config.process_timeout,
         )
+
+        if expect_change and before is not None:
+            after = _doc_fingerprint(output_path)
+            if after is not None and after == before:
+                hint = noop_hint or (
+                    "the selection may not match what this action needs — check object_ids, "
+                    "the required object count, and whether the operation needs a GUI"
+                )
+                return VectorOperationResult(
+                    success=False,
+                    operation=operation,
+                    message=f"{operation} changed nothing (no-op): {hint}",
+                    data={
+                        "input_path": input_path,
+                        "output_path": output_path,
+                        "actions": actions,
+                    },
+                    execution_time_ms=(time.time() - start) * 1000,
+                    error="no-op",
+                ).model_dump()
+
         return VectorOperationResult(
             success=True,
             operation=operation,

@@ -21,6 +21,12 @@ InkscapeVectorOperation = Literal[
     "text_to_path",
     "construct_svg",
     "apply_boolean",
+    # `scale_selection` is what the old `path_inset_outset` actually did (transform-grow:
+    # a uniform scale of the selection). `path_offset` is the real outline offset, and
+    # needs a GUI. The old name is kept so it can fail with a pointer rather than
+    # silently doing the wrong thing.
+    "scale_selection",
+    "path_offset",
     "path_inset_outset",
     "path_simplify",
     "path_clean",
@@ -115,6 +121,9 @@ InkscapeLiveOperation = Literal[
     "inspect_element",
     "execute_inkex",
     "rasterize",
+    # GUI-only: Inkscape's offset machinery does not compute headlessly, so the
+    # inkscape_vector operation of the same name refuses and points here.
+    "path_offset",
 ]
 
 InkscapeMetadataOperation = Literal[

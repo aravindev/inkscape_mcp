@@ -142,16 +142,22 @@ async def test_object_z_order_actually_changes(mcp, multi_path_svg, tmp_path, op
     assert _paths(out) == ["path-b", "path-a"], f"z-order unchanged: {_paths(out)}"
 
 
-async def test_path_inset_outset_changes_geometry(mcp, multi_path_svg, tmp_path):
-    """`path-outset` doesn't exist in 1.4; the action is `transform-grow:<n>`."""
-    out = tmp_path / "outset.svg"
+async def test_scale_selection_changes_geometry(mcp, multi_path_svg, tmp_path):
+    """`transform-grow:<n>` scales the selection so its bbox grows by n.
+
+    This was `path_inset_outset`, which claimed to offset a path outline. It never did
+    — `path-outset` / `path-inset` / `path-offset` are all inert headlessly in 1.4.
+    The operation is named for what it actually does now, and the old name refuses
+    (see test_gui_only_guard.py).
+    """
+    out = tmp_path / "scaled.svg"
     before = etree.parse(str(multi_path_svg)).getroot()
     before_d = [e.get("d") for e in before.iter(f"{SVG}path")]
 
     res = await mcp.call_tool(
         "inkscape_vector",
         {
-            "operation": "path_inset_outset",
+            "operation": "scale_selection",
             "input_path": str(multi_path_svg),
             "output_path": str(out),
             "offset": 20,
@@ -159,7 +165,7 @@ async def test_path_inset_outset_changes_geometry(mcp, multi_path_svg, tmp_path)
     )
     assert _payload(res)["success"] is True
     after_d = [e.get("d") for e in etree.parse(str(out)).getroot().iter(f"{SVG}path")]
-    assert after_d != before_d, "outset produced identical geometry"
+    assert after_d != before_d, "scaling produced identical geometry"
 
 
 async def test_select_all_does_not_target_the_layer_group(mcp, minimal_svg, tmp_path):
@@ -181,7 +187,7 @@ async def test_select_all_does_not_target_the_layer_group(mcp, minimal_svg, tmp_
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("operation", ["optimize_svg", "scour_svg", "path_break_apart"])
+@pytest.mark.parametrize("operation", ["optimize_svg", "scour_svg"])
 async def test_previously_undispatched_operations_run(mcp, minimal_svg, tmp_path, operation):
     """These were advertised in InkscapeVectorOperation but had no dispatcher branch."""
     out = tmp_path / f"{operation}.svg"
@@ -193,6 +199,41 @@ async def test_previously_undispatched_operations_run(mcp, minimal_svg, tmp_path
     assert p["success"] is True, p
     assert p.get("error") != "NotImplementedError"
     assert out.exists() and out.stat().st_size > 0
+
+
+async def test_path_break_apart_splits_a_compound_path(mcp, multi_path_svg, tmp_path):
+    """Break-apart needs a compound path to break. It used to be smoke-tested against
+    minimal.svg, which has no paths at all, so it reported success over an untouched
+    document."""
+    combined = tmp_path / "combined.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {
+            "operation": "path_combine",
+            "input_path": str(multi_path_svg),
+            "output_path": str(combined),
+            "object_ids": ["path-a", "path-b"],
+        },
+    )
+    assert _payload(res)["success"] is True
+    assert len(list(etree.parse(str(combined)).getroot().iter(f"{SVG}path"))) == 1
+
+    out = tmp_path / "broken.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {"operation": "path_break_apart", "input_path": str(combined), "output_path": str(out)},
+    )
+    assert _payload(res)["success"] is True
+    assert len(list(etree.parse(str(out)).getroot().iter(f"{SVG}path"))) >= 2
+
+
+async def test_path_break_apart_reports_noop_on_simple_paths(mcp, minimal_svg, tmp_path):
+    out = tmp_path / "nothing_broken.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {"operation": "path_break_apart", "input_path": str(minimal_svg), "output_path": str(out)},
+    )
+    assert _payload(res)["success"] is False
 
 
 async def test_scour_strips_editor_state(mcp, minimal_svg, tmp_path):
