@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Page is 400x300. The drawing occupies only 40,40 .. 260,190 (220x150), so any
+     op that conflates "page size" with "drawing bbox" reports visibly wrong numbers. -->
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="400" height="300" viewBox="0 0 400 300" version="1.1">
+  <g inkscape:groupmode="layer" id="layer-pd" inkscape:label="pd">
+    <rect id="pd-rect" x="40" y="40" width="120" height="90" fill="#cc3333"/>
+    <rect id="pd-rect2" x="200" y="150" width="60" height="40" fill="#3366cc"/>
+  </g>
+</svg>

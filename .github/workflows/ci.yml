@@ -63,5 +63,12 @@ jobs:
       - name: Mypy
         run: uv run mypy src/
 
+      # tests/live/ drives a real Inkscape GUI over D-Bus — no display, no bridge, and
+      # (as the multi-window work showed) 1.4.4 is not stable enough under automation to
+      # be worth booting one in CI. Those tests skip themselves when no bridge is
+      # reachable; ignoring the directory keeps them from even importing.
       - name: Pytest
-        run: uv run pytest tests/ -m "not network" -q --tb=short --ignore=tests/test_inkscape_live.py
+        run: >
+          uv run pytest tests/ -m "not network" -q --tb=short
+          --ignore=tests/test_inkscape_live.py
+          --ignore=tests/live

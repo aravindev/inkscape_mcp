@@ -69,3 +69,27 @@ def trace_bitmap(tmp_path: Path) -> Path:
     dest = tmp_path / "trace.png"
     shutil.copy(FIXTURES / "bitmap_for_trace.png", dest)
     return dest
+
+
+@pytest.fixture
+def grouped_svg(tmp_path: Path) -> Path:
+    """Two groups plus a loose rect — exercises group-scoped selection."""
+    dest = tmp_path / "grouped.svg"
+    shutil.copy(FIXTURES / "grouped.svg", dest)
+    return dest
+
+
+@pytest.fixture
+def stroked_svg(tmp_path: Path) -> Path:
+    """Two identically-stroked paths — discriminates per-object stroke_to_path scope."""
+    dest = tmp_path / "stroked.svg"
+    shutil.copy(FIXTURES / "stroked.svg", dest)
+    return dest
+
+
+@pytest.fixture
+def page_vs_drawing_svg(tmp_path: Path) -> Path:
+    """Page (400x300) deliberately differs from drawing bbox (220x150)."""
+    dest = tmp_path / "page_vs_drawing.svg"
+    shutil.copy(FIXTURES / "page_vs_drawing.svg", dest)
+    return dest

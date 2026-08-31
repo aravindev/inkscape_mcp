@@ -164,6 +164,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from .dimensions import size_report
+
 # Formats Inkscape cannot export natively — we pipe through Pillow.
 _PILLOW_FORMATS = {"jpeg", "jpg", "webp", "avif"}
 
@@ -484,28 +486,10 @@ async def inkscape_file(
                 ).model_dump()
 
             try:
-                # Query dimensions
-                width_result = await cli_wrapper._execute_command(
-                    [
-                        str(config.inkscape_executable),
-                        "--app-id-tag=mcp",
-                        str(input_path_obj),
-                        "--query-width",
-                    ],
-                    config.process_timeout,
-                )
-                height_result = await cli_wrapper._execute_command(
-                    [
-                        str(config.inkscape_executable),
-                        "--app-id-tag=mcp",
-                        str(input_path_obj),
-                        "--query-height",
-                    ],
-                    config.process_timeout,
-                )
-
-                width = float(width_result.strip())
-                height = float(height_result.strip())
+                # `width`/`height` here used to be the drawing bounding box while
+                # `analysis statistics` used the same names for the page size. Both are
+                # now reported under names that say which is which.
+                report = await size_report(input_path_obj, cli_wrapper, config)
 
                 return FileOperationResult(
                     success=True,
@@ -514,8 +498,7 @@ async def inkscape_file(
                     data={
                         "path": str(input_path_obj.resolve()),
                         "file_size": input_path_obj.stat().st_size,
-                        "width": width,
-                        "height": height,
+                        **report,
                         "format": "svg",
                     },
                     execution_time_ms=(time.time() - start_time) * 1000,

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="200" height="200" viewBox="0 0 200 200" version="1.1">
+  <g inkscape:groupmode="layer" id="layer-grouped" inkscape:label="grouped">
+    <g id="grp-1">
+      <rect id="g1-a" x="10" y="10" width="20" height="20" fill="#cc3333"/>
+      <rect id="g1-b" x="40" y="10" width="20" height="20" fill="#3366cc"/>
+    </g>
+    <g id="grp-2">
+      <rect id="g2-a" x="10" y="60" width="20" height="20" fill="#118844"/>
+    </g>
+    <rect id="loose-rect" x="120" y="120" width="30" height="30" fill="#eeaa22"/>
+  </g>
+</svg>

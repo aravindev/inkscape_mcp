@@ -10,7 +10,7 @@ import pytest
 
 from tests._helpers import payload as _payload
 
-_NEWLY_IMPLEMENTED = ["create_mesh_gradient", "construct_svg", "path_inset_outset", "path_combine"]
+_NEWLY_IMPLEMENTED = ["construct_svg", "path_combine"]
 
 
 async def test_query_document(mcp, minimal_svg):
@@ -128,23 +128,95 @@ async def test_completed_stub_replacements(mcp, multi_path_svg, tmp_path, op):
     assert out.exists() and out.stat().st_size > 0
 
 
-SIMPLE_NEW_OPS = [
-    "lpe_add_corners",
-    "lpe_remove",
-    "lpe_paste",
-    "lpe_clone_link",
-]
+# These used to be asserted as blanket successes on a two-path fixture. They are not:
+# `create_mesh_gradient` and `lpe_paste` cannot run without a GUI, and `path_inset_outset`
+# was renamed once it turned out to be a scale rather than an offset. Each now has to
+# refuse, and name why.
+GUI_ONLY_OR_RENAMED = ["create_mesh_gradient", "lpe_paste", "path_inset_outset"]
 
 
-@pytest.mark.parametrize("op", SIMPLE_NEW_OPS)
-async def test_simple_new_ops(mcp, multi_path_svg, tmp_path, op):
+@pytest.mark.parametrize("op", GUI_ONLY_OR_RENAMED)
+async def test_gui_only_and_renamed_ops_refuse_headlessly(mcp, multi_path_svg, tmp_path, op):
     out = tmp_path / f"{op}.svg"
     res = await mcp.call_tool(
         "inkscape_vector",
         {"operation": op, "input_path": str(multi_path_svg), "output_path": str(out)},
     )
     payload = _payload(res)
-    assert payload["success"] is True, payload
+    assert payload["success"] is False, f"{op} cannot work here and must say so: {payload}"
+    assert payload["message"].strip(), "a refusal must explain itself"
+
+
+async def test_lpe_add_corners_applies_an_effect(mcp, multi_path_svg, tmp_path):
+    out = tmp_path / "lpe_add.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {
+            "operation": "lpe_add_corners",
+            "input_path": str(multi_path_svg),
+            "output_path": str(out),
+            "object_ids": ["path-a"],
+        },
+    )
+    assert _payload(res)["success"] is True
+    assert "path-effect" in out.read_text(), "the LPE should be recorded in the document"
+
+
+async def test_lpe_remove_reports_noop_when_there_is_no_effect(mcp, multi_path_svg, tmp_path):
+    """multi_path.svg carries no path effects, so removing one does nothing —
+    which used to be reported as a success."""
+    out = tmp_path / "lpe_rm.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {
+            "operation": "lpe_remove",
+            "input_path": str(multi_path_svg),
+            "output_path": str(out),
+            "object_ids": ["path-a"],
+        },
+    )
+    assert _payload(res)["success"] is False
+
+
+async def test_lpe_remove_strips_an_applied_effect(mcp, multi_path_svg, tmp_path):
+    """The positive direction, so the guard above isn't just always-failing."""
+    withlpe = tmp_path / "withlpe.svg"
+    add = await mcp.call_tool(
+        "inkscape_vector",
+        {
+            "operation": "lpe_add_corners",
+            "input_path": str(multi_path_svg),
+            "output_path": str(withlpe),
+            "object_ids": ["path-a"],
+        },
+    )
+    assert _payload(add)["success"] is True
+
+    out = tmp_path / "nolpe.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {
+            "operation": "lpe_remove",
+            "input_path": str(withlpe),
+            "output_path": str(out),
+            "object_ids": ["path-a"],
+        },
+    )
+    assert _payload(res)["success"] is True, "removing a real effect must succeed"
+
+
+async def test_lpe_clone_link(mcp, multi_path_svg, tmp_path):
+    out = tmp_path / "lpe_clone.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {
+            "operation": "lpe_clone_link",
+            "input_path": str(multi_path_svg),
+            "output_path": str(out),
+            "object_ids": ["path-a"],
+        },
+    )
+    assert _payload(res)["success"] is True
     assert out.exists() and out.stat().st_size > 0
 
 
@@ -201,39 +273,78 @@ async def test_text_on_path(server, tmp_path):
         text_id="t1",
         path_id="p1",
     )
-    assert res["success"] is True, res
-    assert out.exists() and out.stat().st_size > 0
+    # `text-put-on-path` emits no <textPath> headlessly under any selection order
+    # (both ids at once, sequential additive selects, or select-clear first), so this
+    # now refuses instead of writing an unchanged document and calling it a success.
+    assert res["success"] is False, res
+    assert "inkscape_live" in res["message"]
 
 
-# align / distribute additionally require an operation_type — they are no-ops without one.
+# Each op is paired with a fixture it can actually act on, and with the ids it needs.
+# The previous version ran every one of these against the same two-path document and
+# asserted success — so `stroke_to_path` (no strokes there), `ungroup` (no groups),
+# `clone_unlink` (no clones) and `distribute` (nothing to spread between two objects)
+# all "passed" while doing nothing at all.
+#   (operation, fixture name, extra args)
 NEW_OPS_TOOLBOX = [
-    "path_division",
-    "path_cut",
-    "path_split",
-    "path_fill_between",
-    "stroke_to_path",
-    "flip_horizontal",
-    "flip_vertical",
-    "rotate_90_cw",
-    "rotate_90_ccw",
-    ("align", "top"),
-    ("distribute", "hgap"),
-    "ungroup",
-    "clone",
-    "clone_unlink",
-    "object_to_marker",
-    "object_to_pattern",
+    ("path_division", "multi_path_svg", {"object_ids": ["path-a", "path-b"]}),
+    ("path_cut", "multi_path_svg", {"object_ids": ["path-a", "path-b"]}),
+    ("path_split", "multi_path_svg", {}),
+    ("path_fill_between", "multi_path_svg", {"object_ids": ["path-a", "path-b"]}),
+    ("stroke_to_path", "stroked_svg", {"object_ids": ["stroke-a"]}),
+    ("flip_horizontal", "multi_path_svg", {}),
+    ("flip_vertical", "multi_path_svg", {}),
+    ("rotate_90_cw", "multi_path_svg", {}),
+    ("rotate_90_ccw", "multi_path_svg", {}),
+    ("align", "minimal_svg", {"operation_type": "top"}),
+    ("distribute", "minimal_svg", {"operation_type": "hgap"}),
+    ("ungroup", "grouped_svg", {"object_ids": ["grp-1"]}),
+    ("clone", "multi_path_svg", {"object_ids": ["path-a"]}),
+    ("object_to_marker", "multi_path_svg", {"object_ids": ["path-a"]}),
+    ("object_to_pattern", "multi_path_svg", {"object_ids": ["path-a"]}),
 ]
 
 
-@pytest.mark.parametrize("op", NEW_OPS_TOOLBOX)
-async def test_path_object_toolbox(mcp, multi_path_svg, tmp_path, op):
-    op, operation_type = op if isinstance(op, tuple) else (op, "")
+@pytest.mark.parametrize(("op", "fixture_name", "extra"), NEW_OPS_TOOLBOX, ids=[o[0] for o in NEW_OPS_TOOLBOX])
+async def test_path_object_toolbox(mcp, request, tmp_path, op, fixture_name, extra):
+    src = request.getfixturevalue(fixture_name)
     out = tmp_path / f"{op}.svg"
-    args = {"operation": op, "input_path": str(multi_path_svg), "output_path": str(out)}
-    if operation_type:
-        args["operation_type"] = operation_type
+    args = {"operation": op, "input_path": str(src), "output_path": str(out), **extra}
     res = await mcp.call_tool("inkscape_vector", args)
     payload = _payload(res)
     assert payload["success"] is True, payload
     assert out.exists() and out.stat().st_size > 0
+
+
+async def test_clone_unlink_after_cloning(mcp, multi_path_svg, tmp_path):
+    """clone_unlink needs something cloned first — run against a document with no
+    <use> elements it is, correctly, a no-op."""
+    cloned = tmp_path / "cloned.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {
+            "operation": "clone",
+            "input_path": str(multi_path_svg),
+            "output_path": str(cloned),
+            "object_ids": ["path-a"],
+        },
+    )
+    assert _payload(res)["success"] is True
+    assert "<use" in cloned.read_text()
+
+    out = tmp_path / "unlinked.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {"operation": "clone_unlink", "input_path": str(cloned), "output_path": str(out)},
+    )
+    assert _payload(res)["success"] is True
+    assert "<use" not in out.read_text(), "unlinking should dissolve the clone"
+
+
+async def test_clone_unlink_reports_noop_without_clones(mcp, multi_path_svg, tmp_path):
+    out = tmp_path / "nothing_to_unlink.svg"
+    res = await mcp.call_tool(
+        "inkscape_vector",
+        {"operation": "clone_unlink", "input_path": str(multi_path_svg), "output_path": str(out)},
+    )
+    assert _payload(res)["success"] is False

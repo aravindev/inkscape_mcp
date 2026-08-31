@@ -61,20 +61,25 @@ _EDIT_XML_ACTIONS = frozenset(
 )
 
 
-def _parse_svg_fragment(xml_str: str) -> "etree._Element":
-    """Parse an XML fragment, declaring SVG namespaces so children inherit them.
+def _parse_svg_fragment(xml_str: str) -> list:
+    """Parse an XML fragment into its top-level elements, in document order.
 
     Without the wrapper, lxml gives the user-supplied fragment ``xmlns=""``
     which Inkscape refuses to render. The wrapper declares the SVG default
     namespace plus the usual Inkscape/sodipodi/xlink/rdf/dc prefixes so any
     element the caller writes ends up in the correct namespace.
+
+    Several sibling elements are allowed. Requiring exactly one made it impossible to
+    insert a group of shapes in a single undoable edit — and `insert_svg`, which builds
+    on this, is *typically* handed several siblings.
     """
     nsdecls = " ".join(f'xmlns:{p}="{u}"' for p, u in _NS_MAP.items())
     wrapped = f'<root xmlns="{_NS_MAP["svg"]}" {nsdecls}>{xml_str}</root>'
     root = etree.fromstring(wrapped.encode("utf-8"))
-    if len(root) != 1:
-        raise ValueError(f"fragment must have exactly one top-level element, got {len(root)}")
-    return root[0]
+    elements = [c for c in root if isinstance(c.tag, str)]
+    if not elements:
+        raise ValueError("fragment contained no elements")
+    return elements
 
 
 class McpEditXml(inkex.EffectExtension):
@@ -158,11 +163,16 @@ class McpEditXml(inkex.EffectExtension):
         try:
             for node in matches:
                 if action == "append":
-                    node.append(_parse_svg_fragment(spec["xml"]))
+                    for frag in _parse_svg_fragment(spec["xml"]):
+                        node.append(frag)
                 elif action == "insert_before":
-                    node.addprevious(_parse_svg_fragment(spec["xml"]))
+                    for frag in _parse_svg_fragment(spec["xml"]):
+                        node.addprevious(frag)
                 elif action == "insert_after":
-                    node.addnext(_parse_svg_fragment(spec["xml"]))
+                    # Reversed: each addnext lands immediately after `node`, so
+                    # inserting in reverse preserves the fragment's own order.
+                    for frag in reversed(_parse_svg_fragment(spec["xml"])):
+                        node.addnext(frag)
                 elif action == "remove":
                     parent = node.getparent()
                     if parent is not None:
@@ -197,24 +207,47 @@ class McpEditXml(inkex.EffectExtension):
                     parent = node.getparent()
                     if parent is None:
                         raise ValueError("cannot replace the document root")
-                    parent.replace(node, _parse_svg_fragment(spec["xml"]))
+                    frags = _parse_svg_fragment(spec["xml"])
+                    parent.replace(node, frags[0])
+                    # Any further siblings follow the one that took node's place.
+                    for extra in reversed(frags[1:]):
+                        frags[0].addnext(extra)
                 affected += 1
         except (KeyError, ValueError, etree.XMLSyntaxError) as exc:
             _write_result({"ok": False, "error": f"mutation failed: {exc}"})
             return
 
+        # Name the document that was actually mutated. Inkscape runs an effect against
+        # the ACTIVE desktop and offers no way to pick another, so this is the caller's
+        # only way to confirm the edit landed where they intended.
         _write_result(
             {
                 "ok": True,
                 "action": action,
                 "xpath": xpath,
                 "affected": affected,
+                "active_document": _document_identity(root),
             }
         )
 
 
 def _write_result(payload: dict) -> None:
     (EXCHANGE_DIR / "result.json").write_text(json.dumps(payload))
+
+
+def _document_identity(root) -> dict:
+    """Identify the document this extension ran against.
+
+    Reports only what is knowable: `path` is set ONLY when `sodipodi:docname` is already
+    absolute. Resolving a bare docname against the CWD would be wrong — an extension's
+    CWD is the extension install directory, not the document's location.
+
+    Duplicated in mcp_inspect.py: these plugins are copied into Inkscape's extension
+    directory as standalone scripts, so they cannot share a module.
+    """
+    docname = root.get("{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}docname") or ""
+    path = docname if docname.startswith("/") or (len(docname) > 2 and docname[1] == ":") else ""
+    return {"docname": docname, "path": path, "root_id": root.get("id") or ""}
 
 
 if __name__ == "__main__":

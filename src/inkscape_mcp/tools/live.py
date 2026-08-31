@@ -10,10 +10,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from lxml import etree
 from pydantic import BaseModel
 
 from .. import bus_manager
-from ..clipboard import stage_svg_fragment
+from ..clipboard import SVG_NS
 from ..dbus_client import InkscapeDBus
 from ..extension_bridge import invoke_extension
 from ..win_dbus_client import WinInkscapeDBus
@@ -94,6 +95,37 @@ def _action_mutates_document(action: str) -> bool:
     return not any(action.startswith(p) for p in _READ_ONLY_PREFIXES)
 
 
+def _save_active_document(bus: InkscapeDBus, window_id: int) -> tuple[bool, str]:
+    """Persist the edited document, or explain why we declined to.
+
+    There is a scope mismatch at the heart of this. Every MCP edit lands in the ACTIVE
+    document (app-scope actions and effect extensions both go there), but `document-save`
+    exists only at window scope — it isn't even in `--action-list`. With one window the
+    two are necessarily the same document. With several, firing save at a window we
+    merely guessed would save some *other* document and leave the edited one dirty on
+    disk, so we skip it and say so rather than persisting the wrong file.
+
+    Returns (saved, reason-when-not-saved).
+    """
+    if os.environ.get(_AUTO_SAVE_ENV) == "0":
+        return False, "auto-save disabled via INKSCAPE_MCP_AUTO_SAVE=0"
+    try:
+        windows = bus.list_windows()
+    except Exception:
+        windows = []
+    if len(windows) > 1:
+        return False, (
+            f"{len(windows)} documents are open, so the edited (active) document cannot be "
+            "matched to a window for saving — the edit is applied in Inkscape but NOT written "
+            "to disk. Save in the GUI, or work with a single document open."
+        )
+    try:
+        bus.activate("document-save", scope="window", window_id=window_id)
+        return True, ""
+    except Exception as exc:
+        return False, f"document-save failed: {exc}"
+
+
 def _activate_with_optional_save(
     bus: InkscapeDBus,
     action: str,
@@ -105,15 +137,10 @@ def _activate_with_optional_save(
     Returns True if save was fired. Save failure is swallowed — the primary edit
     succeeded, and a stale on-disk file shouldn't block the agent."""
     bus.activate(action, args, scope=scope, window_id=window_id)
-    if os.environ.get(_AUTO_SAVE_ENV) == "0":
-        return False
     if not _action_mutates_document(action):
         return False
-    try:
-        bus.activate("document-save", scope="window", window_id=window_id)
-        return True
-    except Exception:
-        return False
+    saved, _ = _save_active_document(bus, window_id)
+    return saved
 
 
 def _resolve_window_id(bus: InkscapeDBus, requested: int) -> int:
@@ -195,6 +222,11 @@ def _result(
         execution_time_ms=elapsed,
         error=error,
     ).model_dump()
+
+
+# Ops that describe the whole Inkscape instance rather than one document, so naming a
+# window is unambiguous even with several open.
+_WINDOW_AGNOSTIC_OPS = frozenset({"ping", "list_actions", "open_file"})
 
 
 def _looks_like_selector(target: str) -> bool:
@@ -351,35 +383,190 @@ def _op_set_selection(bus: InkscapeDBus, operation: str, target: str, start: flo
     )
 
 
-def _op_insert_svg(
+def _fragment_children(payload: str) -> list[Any]:
+    """Parse a payload into the elements to insert, accepting a wrapper or bare nodes.
+
+    A bare fragment (`<rect .../>`) and a wrapped one (`<svg>…</svg>`) are both
+    accepted: the clipboard route silently dropped the former while reporting success,
+    which is exactly the kind of quiet failure this tool should not have.
+    """
+    text = payload.strip()
+    if not text:
+        return []
+    parser = etree.XMLParser(remove_blank_text=False, recover=False)
+    try:
+        root = etree.fromstring(text.encode("utf-8"), parser=parser)
+    except etree.XMLSyntaxError:
+        # Bare sibling nodes have no single root — wrap and retry.
+        try:
+            root = etree.fromstring(f'<svg xmlns="{SVG_NS}">{text}</svg>'.encode(), parser=parser)
+        except etree.XMLSyntaxError:
+            return []
+    local = etree.QName(root).localname if isinstance(root.tag, str) else ""
+    if local == "svg":
+        return [c for c in root if isinstance(c.tag, str)]
+    return [root]
+
+
+async def _op_path_offset(
+    bus: InkscapeDBus,
+    operation: str,
+    target: str,
+    payload_json: str,
+    window_id: int,
+    start: float,
+) -> dict[str, Any]:
+    """Offset a path's outline using Inkscape's own Offset live path effect.
+
+    This is the GUI half of the operation `inkscape_vector` refuses. Inkscape's offset
+    is unreachable headlessly — `path-outset` / `path-inset` / `path-offset` are all
+    inert via the CLI, and the Offset LPE never recomputes on a headless export even
+    when forced through `object-to-path`. In a running GUI Inkscape evaluates the LPE
+    itself, so we attach the effect and let it do the geometry rather than
+    reimplementing bezier offsetting.
+
+    payload (JSON): {"offset": <number>, "unit": "px", "join": "miter|round|bevel"}
+    Positive grows the outline, negative shrinks it.
+
+    Magnitude caveat, measured against 1.4.4: Inkscape applies its own unit conversion
+    to the LPE's `offset` and does not appear to honour `unit="px"` — a request of 10
+    moved each edge by 10/(96/25.4) ≈ 2.65 user units. The *shape* of the change is a
+    true offset (both axes grow by the same absolute amount, unlike a scale), but the
+    exact magnitude follows Inkscape. Deliberately not compensated here: a fudge factor
+    would be wrong at other document scales. Measure the result with `inspect_element`
+    if the precise size matters.
+    """
+    if not target:
+        return _result(operation, False, "target (path id) is required", error="missing target", start=start)
+    try:
+        payload = json.loads(payload_json) if payload_json else {}
+    except json.JSONDecodeError as exc:
+        return _result(operation, False, f"payload is not valid JSON: {exc}", error=str(exc), start=start)
+    if not isinstance(payload, dict):
+        return _result(operation, False, "payload must decode to a JSON object", error="bad payload", start=start)
+
+    try:
+        offset = float(payload.get("offset", 0))
+    except (TypeError, ValueError):
+        return _result(operation, False, "'offset' must be a number", error="bad offset", start=start)
+    if offset == 0:
+        return _result(operation, False, "'offset' must be non-zero", error="bad offset", start=start)
+
+    join = str(payload.get("join", "miter"))
+    unit = str(payload.get("unit", "px"))
+    effect_id = f"mcp-offset-{uuid.uuid4().hex[:8]}"
+
+    # The effect definition lives in <defs>; the path then references it and keeps its
+    # current `d` as `inkscape:original-d`, which is what the LPE reads from.
+    lpe = (
+        f'<inkscape:path-effect id="{effect_id}" effect="offset" '
+        f'offset="{offset:g}" unit="{unit}" linejoin_type="{join}" miter_limit="4" '
+        f'attempt_force_join="false" update_on_knot_move="true" is_visible="true" lpeversion="1"/>'
+    )
+    add_def = await _op_edit_xml(
+        bus, operation, "/svg:svg/svg:defs", json.dumps({"action": "append", "xml": lpe}), window_id, start
+    )
+    if not add_def.get("success"):
+        return add_def
+
+    # `original-d` must carry the pre-effect geometry, so seed it from the current `d`.
+    seed = await _op_execute_inkex(
+        bus,
+        operation,
+        (
+            f"p = svg.getElementById({target!r})\n"
+            "if p is None:\n"
+            "    set_result({'ok': False, 'error': 'no such path'})\n"
+            "else:\n"
+            "    d = p.get('d')\n"
+            "    set_result({'ok': d is not None, 'd': d})\n"
+        ),
+        start,
+    )
+    seeded = (seed.get("data") or {}).get("result") or {}
+    if not seeded.get("ok"):
+        return _result(
+            operation,
+            False,
+            f"{target!r} is not a path with a 'd' attribute — offset applies to paths only",
+            data={"path_id": target},
+            error="not a path",
+            start=start,
+        )
+
+    applied = await _op_edit_xml(
+        bus,
+        operation,
+        f'//*[@id="{target}"]',
+        json.dumps({"action": "set_attr", "name": "inkscape:original-d", "value": seeded["d"]}),
+        window_id,
+        start,
+    )
+    if not applied.get("success"):
+        return applied
+
+    linked = await _op_edit_xml(
+        bus,
+        operation,
+        f'//*[@id="{target}"]',
+        json.dumps({"action": "set_attr", "name": "inkscape:path-effect", "value": f"#{effect_id}"}),
+        window_id,
+        start,
+    )
+    if linked.get("success"):
+        linked["message"] = f"applied offset {offset:g}{unit} to {target!r} via the Offset LPE"
+        linked["data"].update({"path_id": target, "offset": offset, "effect_id": effect_id})
+    return linked
+
+
+async def _op_insert_svg(
     bus: InkscapeDBus,
     operation: str,
     payload: str,
     window_id: int,
     start: float,
 ) -> dict[str, Any]:
-    if not payload.strip():
+    """Insert geometry by appending it to the document, not via the clipboard.
+
+    The old route staged the fragment with `xclip` and fired `paste-in-place`. That was
+    wrong three ways, all of them silent: `xclip` daemonises, so `subprocess.run`
+    returned before it owned the selection and the paste could pick up the *previous*
+    payload; paste-in-place renormalises geometry, so a rect authored at (250,200)
+    landed at (0,-50), off-canvas; and a fragment without an `<svg>` wrapper was
+    dropped entirely. All three reported `success: true, saved: true`.
+
+    Appending through the edit_xml extension keeps the authored coordinates, has no
+    clipboard to race, and returns a node count we can verify.
+    """
+    children = _fragment_children(payload)
+    if not children:
         return _result(
             operation,
             False,
-            "payload (SVG fragment) is required",
+            (
+                "payload contained no SVG elements to insert — expected an element, a list of "
+                "sibling elements, or an <svg>…</svg> wrapper"
+                if payload.strip()
+                else "payload (SVG fragment) is required"
+            ),
             error="empty payload",
             start=start,
         )
-    stage_svg_fragment(payload)
-    saved = _activate_with_optional_save(
+
+    xml = "".join(etree.tostring(c, encoding="unicode") for c in children)
+    result = await _op_edit_xml(
         bus,
-        "paste-in-place",
-        scope="window",
-        window_id=window_id,
-    )
-    return _result(
         operation,
-        True,
-        "staged SVG fragment and triggered paste-in-place",
-        data={"window_id": window_id, "bytes": len(payload), "saved": saved},
-        start=start,
+        "/svg:svg",
+        json.dumps({"action": "append", "xml": xml}),
+        window_id,
+        start,
     )
+    if result.get("success"):
+        result["message"] = f"inserted {len(children)} element(s) into the live document"
+        result["data"]["inserted"] = len(children)
+        result["data"]["bytes"] = len(payload)
+    return result
 
 
 # Inkex code that reads the staged fragment and appends its child elements into the
@@ -1013,13 +1200,7 @@ async def _op_edit_xml(
 
     # Persist the in-memory mutation to disk so re-reads see current state.
     # Honours the same kill switch as Pattern A: INKSCAPE_MCP_AUTO_SAVE=0 to skip.
-    saved = False
-    if os.environ.get(_AUTO_SAVE_ENV) != "0":
-        try:
-            bus.activate("document-save", scope="window", window_id=window_id)
-            saved = True
-        except Exception:  # noqa: S110 — save is best-effort; the primary mutation already succeeded
-            pass
+    saved, save_note = _save_active_document(bus, window_id)
 
     affected = result.data.get("affected", 0)
     return _result(
@@ -1031,6 +1212,7 @@ async def _op_edit_xml(
             "xpath": target_xpath,
             "affected": affected,
             "saved": saved,
+            "save_skipped_reason": save_note,
             **{k: v for k, v in result.data.items() if k != "affected"},
         },
         start=start,
@@ -1107,13 +1289,7 @@ async def _op_path_edit(
             start=start,
         )
 
-    saved = False
-    if os.environ.get(_AUTO_SAVE_ENV) != "0":
-        try:
-            bus.activate("document-save", scope="window", window_id=window_id)
-            saved = True
-        except Exception:  # noqa: S110 — save is best-effort; the path edit already succeeded
-            pass
+    saved, save_note = _save_active_document(bus, window_id)
 
     summary = result.data.get("summary", f"path_edit {sub_op!r} applied")
     return _result(
@@ -1124,6 +1300,7 @@ async def _op_path_edit(
             "op": sub_op,
             "path_id": target,
             "saved": saved,
+            "save_skipped_reason": save_note,
             **{k: v for k, v in result.data.items() if k not in ("ok", "op", "path_id")},
         },
         start=start,
@@ -1195,13 +1372,45 @@ async def inkscape_live(
             start=start,
         )
 
-    # Auto-detect: if window 1 (or whatever was requested) isn't actually
-    # open, fall back to the first available window. Lets the agent leave
-    # the default and still work after the user closes/swaps documents.
+    # `window_id` is an assertion, not a router. Inkscape 1.4 exposes no focus-window
+    # action, and the bridge plugins are effect extensions that Inkscape runs against
+    # whatever desktop is active — so a caller asking for window 1 while window 2 is
+    # focused used to silently get window 2's document, and (with auto-save on) write
+    # to it. Refusing when the target is ambiguous is the only honest option; callers
+    # that don't care leave window_id at 0 and read `active_document` from the result.
+    requested_window = window_id
     try:
-        window_id = _resolve_window_id(bus, window_id)
+        window_id = _resolve_window_id(bus, window_id or 1)
     except RuntimeError as exc:
         return _result(operation, False, str(exc), error="no windows", start=start)
+
+    if requested_window:
+        try:
+            open_windows = bus.list_windows()
+        except Exception:
+            open_windows = []
+        if requested_window not in open_windows:
+            return _result(
+                operation,
+                False,
+                f"window_id={requested_window} is not open (open windows: {open_windows or 'none'})",
+                error="unknown window",
+                start=start,
+            )
+        if len(open_windows) > 1 and operation not in _WINDOW_AGNOSTIC_OPS:
+            return _result(
+                operation,
+                False,
+                (
+                    f"window_id={requested_window} cannot be honoured: {len(open_windows)} documents "
+                    "are open and Inkscape 1.4 provides no way to target one — every operation acts "
+                    "on the ACTIVE document. Focus the window you want and retry with window_id=0, "
+                    "then confirm via the active_document field in the response."
+                ),
+                data={"open_windows": open_windows},
+                error="ambiguous window",
+                start=start,
+            )
 
     try:
         if operation == "get_document_xml":
@@ -1211,9 +1420,10 @@ async def inkscape_live(
         if operation == "set_selection":
             return _op_set_selection(bus, operation, target, start)
         if operation == "insert_svg":
-            if bus_manager.is_windows():
-                return await _op_insert_svg_via_inkex(bus, operation, payload, start)
-            return _op_insert_svg(bus, operation, payload, window_id, start)
+            # One code path on every platform now: the clipboard route it used to take
+            # on Linux lost coordinates and raced xclip, and the Windows inkex route
+            # went through mcp_execute, whose mutations are not reliably persisted.
+            return await _op_insert_svg(bus, operation, payload, window_id, start)
         if operation == "delete_selected":
             return _op_delete_selected(bus, operation, window_id, start)
         if operation == "apply_action":
@@ -1228,6 +1438,8 @@ async def inkscape_live(
             return await _op_edit_xml(bus, operation, target, payload, window_id, start)
         if operation == "path_edit":
             return await _op_path_edit(bus, operation, target, payload, window_id, start)
+        if operation == "path_offset":
+            return await _op_path_offset(bus, operation, target, payload, window_id, start)
         if operation == "inspect_selection":
             return await _op_inspect_selection(bus, operation, start)
         if operation == "inspect_layers":

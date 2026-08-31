@@ -66,7 +66,10 @@ VERSION_FILE = INSTALL_DIR / "VERSION"
 # Bump when the bundled plugins change — triggers reinstall on next MCP startup.
 # 10: mcp_edit_xml rejects non-element XPath results instead of dying on AttributeError
 #     (which left result.json unwritten and hung the caller until its timeout).
-PLUGINS_VERSION = "10"
+# 11: computed_style resolves the CSS cascade in the right order (inline style="" beats
+#     the presentation attribute — it used to report the losing declaration), and every
+#     plugin result now names the document it ran against via `active_document`.
+PLUGINS_VERSION = "11"
 
 # Used to detect whether a fresh install has been picked up by a running Inkscape.
 ECHO_ACTION = "org.inkscape.mcp.echo.noprefs"

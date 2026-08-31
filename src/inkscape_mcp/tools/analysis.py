@@ -198,6 +198,7 @@ from lxml import etree
 from pydantic import BaseModel
 
 from ..mcp_tool_types import InkscapeAnalysisOperation
+from .dimensions import size_report
 
 SVG_NS = "{http://www.w3.org/2000/svg}"
 INK_NS = "{http://www.inkscape.org/namespaces/inkscape}"
@@ -278,40 +279,17 @@ async def inkscape_analysis(
                 ).model_dump()
 
         elif operation == "dimensions":
-            # Get document dimensions
+            # Reports page AND drawing-bbox size under distinct names — they are
+            # different numbers and this operation used to return only the latter
+            # while calling it "width"/"height". See tools/dimensions.py.
             try:
-                width_result = await cli_wrapper._execute_command(
-                    [
-                        str(config.inkscape_executable),
-                        "--app-id-tag=mcp",
-                        str(input_path_obj),
-                        "--query-width",
-                    ],
-                    config.process_timeout,
-                )
-                height_result = await cli_wrapper._execute_command(
-                    [
-                        str(config.inkscape_executable),
-                        "--app-id-tag=mcp",
-                        str(input_path_obj),
-                        "--query-height",
-                    ],
-                    config.process_timeout,
-                )
-
-                width = float(width_result.strip())
-                height = float(height_result.strip())
+                report = await size_report(input_path_obj, cli_wrapper, config)
 
                 return AnalysisResult(
                     success=True,
                     operation="dimensions",
                     message=f"Retrieved dimensions for {input_path}",
-                    data={
-                        "width": width,
-                        "height": height,
-                        "units": "px",
-                        "aspect_ratio": width / height if height > 0 else 0,
-                    },
+                    data={**report, "units": "px"},
                     execution_time_ms=(time.time() - start_time) * 1000,
                 ).model_dump()
 
@@ -488,6 +466,11 @@ def _analyze_statistics(path: Path, start: float) -> dict[str, Any]:
         layer_count = sum(1 for e in all_elems if _local_tag(e) == "g" and e.get(f"{INK_NS}groupmode") == "layer")
         # Dimensions come from the document attributes rather than two `--query-*`
         # subprocess launches; viewBox is the authoritative user-space extent.
+        # This is the PAGE size, and is now named as such — it used to be reported as
+        # bare "width"/"height", which three sibling operations used for the drawing
+        # bounding box instead. The drawing bbox is deliberately NOT reported here: it
+        # needs a subprocess, and staying cheap is the point of this operation. Use
+        # `dimensions` when you need both.
         width, height = _document_size(root)
         return AnalysisResult(
             success=True,
@@ -497,6 +480,8 @@ def _analyze_statistics(path: Path, start: float) -> dict[str, Any]:
                 "path": str(path.resolve()),
                 "file_size_bytes": path.stat().st_size,
                 "format": "svg",
+                "page_width": width,
+                "page_height": height,
                 "width": width,
                 "height": height,
                 "element_count": len(all_elems),

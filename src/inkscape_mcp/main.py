@@ -629,7 +629,7 @@ class InkscapeMCPServer:
             operation: InkscapeLiveOperation,
             target: str = "",
             payload: str = "",
-            window_id: int = 1,
+            window_id: int = 0,
         ) -> dict[str, Any]:
             """Drive the RUNNING Inkscape GUI — the user's already-open document — live over D-Bus.
 
@@ -644,6 +644,13 @@ class InkscapeMCPServer:
             XPath, multi-node capable) for everything else, e.g. editing gradients on the
             live doc — it is the reliable persisting edit path. `execute_inkex` does NOT
             persist mutations; don't use it to edit.
+
+            Every op acts on Inkscape's ACTIVE document and reports which one that was in
+            `data.active_document`. `window_id` cannot route — Inkscape 1.4 has no
+            focus-window action — so it is an assertion: leave it at 0 to accept the active
+            document, or pass a window number to have the call REFUSE when more than one
+            document is open and the target is therefore ambiguous. Check
+            `active_document` before any destructive edit; auto-save writes to disk.
 
             Operations: ping, get_document_xml, get_selection, set_selection, insert_svg,
             delete_selected, apply_action, list_actions, open_file, save_snapshot, edit_xml,

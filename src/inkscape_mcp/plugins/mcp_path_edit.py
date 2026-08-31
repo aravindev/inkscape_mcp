@@ -58,6 +58,21 @@ def _write_result(payload: dict) -> None:
     (EXCHANGE_DIR / "result.json").write_text(json.dumps(payload))
 
 
+def _document_identity(root) -> dict:
+    """Identify the document this extension ran against.
+
+    Reports only what is knowable: `path` is set ONLY when `sodipodi:docname` is already
+    absolute. Resolving a bare docname against the CWD would be wrong — an extension's
+    CWD is the extension install directory, not the document's location.
+
+    Duplicated in mcp_inspect.py: these plugins are copied into Inkscape's extension
+    directory as standalone scripts, so they cannot share a module.
+    """
+    docname = root.get("{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}docname") or ""
+    path = docname if docname.startswith("/") or (len(docname) > 2 and docname[1] == ":") else ""
+    return {"docname": docname, "path": path, "root_id": root.get("id") or ""}
+
+
 def _err(msg: str) -> None:
     _write_result({"ok": False, "error": msg})
 
@@ -328,6 +343,9 @@ class McpPathEdit(inkex.EffectExtension):
         new_d = str(inkex.Path(csp))
         element.set("d", new_d)
 
+        # Name the document that was actually mutated — Inkscape runs effects against
+        # the ACTIVE desktop and offers no way to pick another.
+        svg_root = self.svg.getroot() if hasattr(self.svg, "getroot") else self.svg
         _write_result(
             {
                 "ok": True,
@@ -335,6 +353,7 @@ class McpPathEdit(inkex.EffectExtension):
                 "path_id": path_id,
                 "d": new_d,
                 "summary": summary,
+                "active_document": _document_identity(svg_root),
             }
         )
 

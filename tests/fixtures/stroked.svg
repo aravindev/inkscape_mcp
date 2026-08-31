@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Two identically-stroked paths. stroke_to_path outlines a stroke into a filled
+     shape and drops the stroke attribute, so "did exactly one of these change?" is a
+     clean discriminator for selection scope. -->
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+     width="200" height="200" viewBox="0 0 200 200" version="1.1">
+  <g inkscape:groupmode="layer" id="layer-stroked" inkscape:label="stroked">
+    <path id="stroke-a" d="M 20,40 L 180,40" fill="none" stroke="#cc3333" stroke-width="8"/>
+    <path id="stroke-b" d="M 20,120 L 180,120" fill="none" stroke="#3366cc" stroke-width="8"/>
+  </g>
+</svg>
