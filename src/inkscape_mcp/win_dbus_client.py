@@ -6,8 +6,7 @@ This class is a drop-in for ``InkscapeDBus`` — identical method surface
 
 Object-path note (Inkscape 1.4.x): app actions live at ``/org/inkscape/Inkscape`` and
 window/document-scope actions at ``/org/inkscape/Inkscape/document/N`` — NOT
-``/org/inkscape/Inkscape/window/N`` (which older Inkscape used and the jeepney client
-still hardcodes).
+``/org/inkscape/Inkscape/window/N`` (which older Inkscape used).
 """
 
 from __future__ import annotations

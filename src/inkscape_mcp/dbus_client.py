@@ -13,7 +13,7 @@ from jeepney.wrappers import DBusErrorResponse
 # Bus name and root object path are fixed by Inkscape's GApplication setup.
 BUS_NAME = "org.inkscape.Inkscape"
 APP_PATH = "/org/inkscape/Inkscape"
-WINDOW_PATH_PREFIX = "/org/inkscape/Inkscape/window"
+DOCUMENT_PATH_PREFIX = "/org/inkscape/Inkscape/document"
 
 _FALSEY = frozenset({"", "0", "false", "no", "off", "none"})
 
@@ -68,7 +68,7 @@ class InkscapeDBus:
         if scope == "app":
             return APP_PATH
         if scope == "window":
-            return f"{WINDOW_PATH_PREFIX}/{window_id}"
+            return f"{DOCUMENT_PATH_PREFIX}/{window_id}"
         raise ValueError(f"scope must be 'app' or 'window', got {scope!r}")
 
     def is_available(self) -> bool:
@@ -159,7 +159,7 @@ class InkscapeDBus:
 
     def list_windows(self) -> list[int]:
         addr = DBusAddress(
-            object_path=WINDOW_PATH_PREFIX,
+            object_path=DOCUMENT_PATH_PREFIX,
             bus_name=BUS_NAME,
             interface="org.freedesktop.DBus.Introspectable",
         )
