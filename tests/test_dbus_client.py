@@ -2,9 +2,33 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
+from jeepney import HeaderFields
 
 from inkscape_mcp.dbus_client import InkscapeDBus
+
+
+def test_window_scoped_operations_use_document_object_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    bus = InkscapeDBus()
+    paths: list[str] = []
+
+    def send(msg: Any) -> Any:
+        paths.append(msg.header.fields[HeaderFields.path])
+        if len(paths) == 1:
+            return SimpleNamespace(body=[["paste"]])
+        return SimpleNamespace(body=["<node><node name='7'/></node>"])
+
+    monkeypatch.setattr(bus, "_send", send)
+
+    assert bus.list_actions(scope="window", window_id=7) == ["paste"]
+    assert bus.list_windows() == [7]
+    assert paths == [
+        "/org/inkscape/Inkscape/document/7",
+        "/org/inkscape/Inkscape/document",
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -28,7 +52,7 @@ def test_list_actions_app(bus: InkscapeDBus) -> None:
 def test_list_actions_window(bus: InkscapeDBus) -> None:
     # Window ids are NOT stable: they climb as documents are opened and closed, so a
     # session that has closed its first document has no window 1 at all. Hardcoding it
-    # made this fail with "Object does not exist at path .../window/1".
+    # made this fail with "Object does not exist at path .../document/1".
     windows = bus.list_windows()
     if not windows:
         pytest.skip("no Inkscape windows open")
