@@ -73,7 +73,10 @@ async def test_export_do_lands_in_actions_not_the_filename(monkeypatch, server, 
 
     async def fake_exec(cmd_args, timeout):
         captured["argv"] = cmd_args
-        Path(str(tmp_path / "out.svg")).write_text("<svg/>")
+        # Behave like Inkscape: write wherever --export-filename points. Outputs are staged to a
+        # sibling temp file and moved into place afterwards, so that is not the final path.
+        target = next(a.split("=", 1)[1] for a in cmd_args if a.startswith("--export-filename="))
+        Path(target).write_text("<svg/>")
         return "", ""
 
     # _execute_actions needs stderr to spot action-level failures, so it goes through

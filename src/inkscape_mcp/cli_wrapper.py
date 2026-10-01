@@ -5,11 +5,15 @@ This module provides core Inkscape command-line functionality for MCP operations
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
 from pathlib import Path
 from typing import Any
+
+from .proc_utils import add_bundled_tools_to_path, child_kwargs, terminate_process_tree
+from .security import SecurityError, atomic_output, validate_action_chain
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,8 @@ class InkscapeCliWrapper:
         """
         self.config = config
         self.logger = logging.getLogger(__name__)
+        # Created lazily so it binds to the running event loop, not the import-time one.
+        self._process_slots: asyncio.Semaphore | None = None
 
         # Basic validation
         if not hasattr(config, "inkscape_executable") or not config.inkscape_executable:
@@ -107,12 +113,20 @@ class InkscapeCliWrapper:
         """
         timeout = timeout or self.config.process_timeout
 
+        # Write beside the target and move into place only on success, so a failed or
+        # timed-out export never leaves a truncated file at `output_path`.
+        with atomic_output(output_path) as tmp_out:
+            return await self._export_file_to(input_path, str(tmp_out), export_type, dpi, export_area, timeout)
+
+    async def _export_file_to(
+        self, input_path: str, out: str, export_type: str, dpi: int, export_area: str, timeout: int
+    ) -> str:
         cmd_args = [
             *self._base_cmd(),
             "--export-type",
             export_type,
             "--export-filename",
-            output_path,
+            out,
         ]
 
         # Add DPI for raster formats
@@ -262,35 +276,53 @@ class InkscapeCliWrapper:
         chain = list(actions)
         if output_path and not any(a == "export-do" or a.startswith("export-do:") for a in chain):
             chain.append("export-do")
-        actions_str = ";".join(chain)
+        # The chain is ';'-joined and Inkscape has no escape for ';', so a value containing
+        # one (or a newline) would smuggle in extra actions. Refuse rather than run it.
+        try:
+            validate_action_chain(chain)
+        except SecurityError as exc:
+            raise InkscapeExecutionError(f"Refusing unsafe action chain: {exc}") from exc
 
         # Add input file
         cmd_args.append(str(Path(input_path).resolve()))
 
-        # Add the actions flag
-        cmd_args.append(f"--actions={actions_str}")
+        with contextlib.ExitStack() as stack:
+            # Export beside the target and move into place only on success. Most callers put
+            # `export-filename:<path>` inside the chain itself (and the chain wins over the
+            # --export-filename flag), so those entries are what must be redirected.
+            staged: list[Path] = []
+            for i, item in enumerate(chain):
+                if item.startswith("export-filename:"):
+                    tmp = stack.enter_context(atomic_output(Path(item.split(":", 1)[1]).resolve()))
+                    chain[i] = f"export-filename:{tmp}"
+                    staged.append(tmp)
+            export_flag: str | None = None
+            if output_path and not staged:
+                tmp = stack.enter_context(atomic_output(Path(output_path).resolve()))
+                export_flag = f"--export-filename={tmp!s}"
+                staged.append(tmp)
+            actions_str = ";".join(chain)
+            cmd_args.append(f"--actions={actions_str}")
+            if export_flag:
+                cmd_args.append(export_flag)
 
-        if output_path:
-            cmd_args.append(f"--export-filename={Path(output_path).resolve()!s}")
+            result, stderr_text = await self._execute_command_capture(cmd_args, timeout)
 
-        result, stderr_text = await self._execute_command_capture(cmd_args, timeout)
+            # Inkscape reports per-action failures on stderr and still exits 0, so a bad action
+            # chain looks identical to a good one: the export is written, just unmodified. That
+            # made `object-trace`/`object-align`/`object-distribute` fired without their required
+            # argument silently return "success" on an untouched file. Fail loudly instead.
+            if action_error := _find_action_error(stderr_text):
+                raise InkscapeExecutionError(f"Inkscape rejected an action: {action_error} | actions: {actions_str}")
 
-        # Inkscape reports per-action failures on stderr and still exits 0, so a bad action
-        # chain looks identical to a good one: the export is written, just unmodified. That
-        # made `object-trace`/`object-align`/`object-distribute` fired without their required
-        # argument silently return "success" on an untouched file. Fail loudly instead.
-        if action_error := _find_action_error(stderr_text):
-            raise InkscapeExecutionError(f"Inkscape rejected an action: {action_error} | actions: {actions_str}")
-
-        # Inkscape can exit 0 without producing the requested output (e.g. unknown action,
-        # mistyped format). Treat a missing/empty output file as a hard failure.
-        if output_path:
-            out = Path(output_path)
-            if not out.exists() or out.stat().st_size == 0:
-                raise InkscapeExecutionError(
-                    f"Inkscape returned success but did not write {output_path}. "
-                    f"Command: {' '.join(cmd_args)} | stdout: {result[:400]}"
-                )
+            # Inkscape can exit 0 without producing the requested output (e.g. unknown action,
+            # mistyped format). Treat a missing/empty output file as a hard failure.
+            for tmp_out in staged:
+                if not tmp_out.exists() or tmp_out.stat().st_size == 0:
+                    raise InkscapeExecutionError(
+                        f"Inkscape returned success but did not write {output_path or tmp_out}. "
+                        f"Command: {' '.join(cmd_args)} | stdout: {result[:400]}"
+                    )
         return result
 
     async def execute_actions(
@@ -357,13 +389,21 @@ class InkscapeCliWrapper:
         warnings — use this; `_execute_command` keeps returning stdout alone so
         the `float()` parsers downstream stay unpoisoned by Gtk chatter.
         """
+        if self._process_slots is None:
+            self._process_slots = asyncio.Semaphore(max(1, int(getattr(self.config, "max_concurrent_processes", 4))))
+        async with self._process_slots:
+            return await self._run_one(cmd_args, timeout)
+
+    async def _run_one(self, cmd_args: list[str], timeout: int) -> tuple[str, str]:
         try:
-            # Use asyncio.create_subprocess_exec for better async handling
+            # Own process group, so a timeout can take down Inkscape's helper processes too
+            # (extensions run in child Python processes), and a sane open-file limit.
             process = await asyncio.create_subprocess_exec(
                 *cmd_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=self._get_environment(),
+                **child_kwargs(),
             )
 
             try:
@@ -384,8 +424,7 @@ class InkscapeCliWrapper:
                 return output, stderr_text
 
             except TimeoutError as e:
-                process.kill()
-                await process.wait()
+                await terminate_process_tree(process)
                 raise InkscapeTimeoutError(f"Command timed out after {timeout} seconds") from e
 
         except FileNotFoundError as e:
@@ -402,5 +441,6 @@ class InkscapeCliWrapper:
         # Ensure UTF-8 encoding
         env["LANG"] = "C.UTF-8"
         env["LC_ALL"] = "C.UTF-8"
+        add_bundled_tools_to_path(env, getattr(self.config, "inkscape_executable", None))
 
         return env

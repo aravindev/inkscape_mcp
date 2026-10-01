@@ -29,13 +29,13 @@ from typing import Any
 
 from lxml import etree
 
+from ..inkscape_detector import InkscapeDetector
+from ..platform_paths import system_extension_dirs, user_extensions_dir
 from .live import _get_bus, _result
 
-_SYSTEM_EXT_DIRS = (
-    Path("/usr/share/inkscape/extensions"),
-    Path("/usr/local/share/inkscape/extensions"),
-)
-_USER_EXT_DIR = Path(os.path.expanduser("~/.config/inkscape/extensions"))
+_INKSCAPE_BIN = os.environ.get("INKSCAPE_BIN") or InkscapeDetector().detect_inkscape_installation()
+_SYSTEM_EXT_DIRS = system_extension_dirs(_INKSCAPE_BIN)
+_USER_EXT_DIR = user_extensions_dir()
 
 # How long to wait for an extension subprocess. Some (LaTeX renderers, raster
 # filters) are genuinely slow; cap generously.
@@ -152,8 +152,7 @@ def _discover(refresh: bool = False) -> dict[str, _Extension]:
 
     found: dict[str, _Extension] = {}
     for source_label, ext_dir in (
-        ("system", _SYSTEM_EXT_DIRS[0]),
-        ("system", _SYSTEM_EXT_DIRS[1]),
+        *(("system", d) for d in _SYSTEM_EXT_DIRS),
         ("user", _USER_EXT_DIR),
     ):
         if not ext_dir.is_dir():

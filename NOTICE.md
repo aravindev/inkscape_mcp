@@ -9,10 +9,10 @@ upstream project was itself bootstrapped from
 labelled "Initial commit — basic structure from gimp-mcp template" and
 the Inkscape-specific code landed in subsequent commits.
 
-This fork targets Linux (developed and tested on Ubuntu 24.04 with
-Inkscape 1.4.4). The upstream targeted Windows first and did not run on
-Linux without patching; Windows-specific compatibility, the original
-test harness, and unused scaffolding have been removed.
+This fork was first developed for Linux (Ubuntu 24.04, Inkscape 1.4.4). The upstream
+targeted Windows first and did not run on Linux without patching; Windows-specific
+compatibility, the original test harness, and unused scaffolding were removed. macOS and
+Windows live-bridge support were added later (see below).
 
 ## Acknowledgement
 
@@ -69,3 +69,39 @@ and platform-aware branches in `tools/live.py`, `clipboard.py`, and
 Inkscape's bundled `gdbus.exe` over a managed D-Bus session bus rather than the Linux
 `jeepney`/`xclip` path. Contributed under the same MIT License; Linux/macOS behaviour is
 unchanged.
+
+## Cross-platform live bridge, security hardening, layers and animation (2026)
+
+Contributed by **radhikrammohan** (<https://github.com/radhikrammohan>), with AI assistance from Claude Code.
+
+This contribution builds on the project above and draws ideas from two other MIT-licensed
+projects. In each case the code was written for this codebase; nothing was copied verbatim, and
+where a design is borrowed it is named here.
+
+**Cross-platform live bridge (original work).** `embedded_bus.py` (a minimal pure-Python D-Bus
+session bus), `bus_connect.py`, `live_session.py` and `platform_paths.py`, plus per-OS Inkscape and
+extension-directory detection in `inkscape_detector.py`. This replaces the need for a system
+`dbus-daemon` (MSYS2 on Windows, Homebrew on macOS), works around a macOS incompatibility in
+jeepney's connection handshake, and handles macOS-specific Inkscape 1.4.2 behaviour (no exported
+window objects; a crash when extensions run with a very large open-file limit). Verified on macOS;
+the Windows TCP path is implemented but has not been run on real hardware.
+
+**Security hardening** (`security.py`, `proc_utils.py`, parts of `cli_wrapper.py`). The following
+ideas come from **`grumpydevorg/inkscape-mcps`** (MIT, Copyright (c) 2025 Inkscape MCP Server,
+<https://github.com/grumpydevorg/inkscape-mcps>): confining paths to a configured workspace,
+a file-size limit, an allowlist of safe actions, writing exports to a temporary file and moving it
+into place, terminating the whole process group on timeout, and a concurrency limit. They are
+re-implemented here around this server's async wrapper, applied through a single FastMCP middleware
+rather than per-tool checks, and extended (JSON-embedded paths, symlink handling, action-chain
+injection checks, a strict mode, atomic writes for chain-embedded export paths).
+
+**Layers and animation** (`tools/layers.py`, `tools/animation.py`). The operation sets and the preset
+catalogue come from **`sandraschi/inkscape-mcp`** (MIT, Copyright (c) 2026 Sandra Schipal), the
+upstream of this fork; layer management had been dropped from this fork. They are rewritten on a real
+XML tree instead of text and regular-expression editing, which fixes nested-layer matching, unescaped
+labels and markup injection, and makes every animation operation act on an element of the user's file.
+Sandraschi's Live Path Effect tools were deliberately **not** ported: its `apply_lpe` calls actions
+(`org.inkscape.effect.<id>`, `lpe-param-set`) that do not exist in Inkscape 1.4, and path effects do
+not compute headlessly at all (verified against Inkscape 1.4.2).
+
+All new code is contributed under the MIT License of this project.

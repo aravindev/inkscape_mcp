@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -135,7 +135,19 @@ class InkscapeConfig(BaseModel):
     enable_file_validation: bool = Field(default=True, description="Enable file type validation")
 
     allowed_directories: list[str] = Field(
-        default_factory=list, description="List of allowed directories for file operations"
+        default_factory=list,
+        description=(
+            "Directories tool paths must stay inside (symlinks resolved). Empty = unrestricted. "
+            "Override with INKSCAPE_MCP_ALLOWED_DIRS (os.pathsep-separated)."
+        ),
+    )
+
+    security_mode: Literal["permissive", "strict"] = Field(
+        default="permissive",
+        description=(
+            "strict: mandatory path scope, raw-action allowlist, no execute_inkex, stock extensions only. "
+            "Override with INKSCAPE_MCP_SECURITY."
+        ),
     )
 
     @field_validator("temp_directory")

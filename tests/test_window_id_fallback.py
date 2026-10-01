@@ -14,9 +14,10 @@ import pytest
 from inkscape_mcp.tools import live
 
 
-def _bus(windows):
+def _bus(windows, documents=()):
     bus = MagicMock()
     bus.list_windows.return_value = list(windows)
+    bus.list_documents.return_value = list(documents)
     return bus
 
 
@@ -42,6 +43,12 @@ def test_resolve_raises_when_no_windows():
     bus = _bus([])
     with pytest.raises(RuntimeError, match="no Inkscape windows"):
         live._resolve_window_id(bus, 1)
+
+
+def test_resolve_accepts_documents_when_platform_exports_no_windows():
+    """macOS: GTK publishes document objects but never window objects."""
+    bus = _bus([], documents=[1])
+    assert live._resolve_window_id(bus, 1) == 1
 
 
 def test_resolve_returns_requested_unchanged_when_list_windows_throws():

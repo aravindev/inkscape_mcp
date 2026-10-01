@@ -8,6 +8,8 @@ from typing import Any
 from lxml import etree
 from pydantic import BaseModel
 
+from ._svg_io import safe_parser
+
 SVG_NS = "http://www.w3.org/2000/svg"
 RDF_NS = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
 DC_NS = "http://purl.org/dc/elements/1.1/"
@@ -117,7 +119,7 @@ def _set_keywords(work: etree._Element, keywords: list[str]) -> None:
 
 
 def _parse(input_path: str) -> etree._ElementTree:
-    parser = etree.XMLParser(remove_blank_text=False)
+    parser = safe_parser(remove_blank_text=False)
     return etree.parse(input_path, parser)
 
 

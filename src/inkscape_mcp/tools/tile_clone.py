@@ -12,6 +12,8 @@ from typing import Any
 
 from lxml import etree
 
+from ._svg_io import safe_parser
+
 SVG_NS = "http://www.w3.org/2000/svg"
 INK_NS = "http://www.inkscape.org/namespaces/inkscape"
 XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -85,7 +87,7 @@ def tile_clone(
         if not source_id:
             return _err("tile_clone", "source_id required", start, "ValueError")
 
-        parser = etree.XMLParser(remove_blank_text=False)
+        parser = safe_parser(remove_blank_text=False)
         tree = etree.parse(input_path, parser)
         root = tree.getroot()
 

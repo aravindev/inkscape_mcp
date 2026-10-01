@@ -142,6 +142,31 @@ InkscapeExtensionOperation = Literal[
     "run_live",
 ]
 
+InkscapeLayersOperation = Literal[
+    "list",
+    "get",
+    "create",
+    "rename",
+    "delete",
+    "show",
+    "hide",
+    "lock",
+    "unlock",
+    "reorder",
+]
+
+InkscapeAnimationOperation = Literal[
+    "list_presets",
+    "apply_preset",
+    "animate_attribute",
+    "animate_transform",
+    "animate_motion",
+    "animate_color",
+    "css_animation",
+    "list_animations",
+    "remove_animation",
+]
+
 # Derive advertised operation counts from the Literals themselves. These used to be
 # hardcoded per call site and drifted apart — the vector count alone was simultaneously
 # claimed as 22 (capabilities resource), 23 (system help) and 47 (README) against an
@@ -154,5 +179,7 @@ OPERATION_COUNTS: dict[str, int] = {
     "inkscape_gradient": len(get_args(InkscapeGradientOperation)),
     "inkscape_live": len(get_args(InkscapeLiveOperation)),
     "inkscape_metadata": len(get_args(InkscapeMetadataOperation)),
+    "inkscape_layers": len(get_args(InkscapeLayersOperation)),
+    "inkscape_animation": len(get_args(InkscapeAnimationOperation)),
     "inkscape_extension": len(get_args(InkscapeExtensionOperation)),
 }

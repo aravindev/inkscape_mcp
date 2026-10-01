@@ -22,19 +22,24 @@ from .inkscape_detector import InkscapeDetector
 from .logging_config import setup_logging
 from .mcp_tool_types import (
     InkscapeAnalysisOperation,
+    InkscapeAnimationOperation,
     InkscapeExtensionOperation,
     InkscapeFileOperation,
     InkscapeGradientOperation,
+    InkscapeLayersOperation,
     InkscapeLiveOperation,
     InkscapeMetadataOperation,
     InkscapeSystemOperation,
     InkscapeVectorOperation,
 )
 from .prompts_resources import register_prompts_and_resources
+from .security import SecurityPolicy, make_middleware
 from .tools import inkscape_analysis as inkscape_analysis_tool
+from .tools import inkscape_animation as inkscape_animation_tool
 from .tools import inkscape_extension as inkscape_extension_tool
 from .tools import inkscape_file as inkscape_file_tool
 from .tools import inkscape_gradient as inkscape_gradient_tool
+from .tools import inkscape_layers as inkscape_layers_tool
 from .tools import inkscape_live as inkscape_live_tool
 from .tools import inkscape_metadata as inkscape_metadata_tool
 from .tools import inkscape_system as inkscape_system_tool
@@ -178,6 +183,7 @@ class InkscapeMCPServer:
         self.tools: dict[str, Any] = {}
         self.logger = logging.getLogger(__name__)
         self.cli_wrapper: Any | None = None
+        self.security_policy = SecurityPolicy()
 
     def _record_config_source(self, name: str, value: Any) -> None:
         """Stamp a setting as auto-detected so `diagnostics` reports its real provenance."""
@@ -207,6 +213,16 @@ class InkscapeMCPServer:
 
             if not self._validate_configuration():
                 return False
+
+            # Enforce path scoping / strict mode on every inkscape_* tool call. Added before any
+            # tool is registered so there is no window in which a call bypasses it.
+            self.security_policy = SecurityPolicy.from_config(self.config)
+            self.mcp.add_middleware(make_middleware(self.security_policy))
+            if self.security_policy.restricted or self.security_policy.strict:
+                logger.info(
+                    f"Security: mode={'strict' if self.security_policy.strict else 'permissive'}, "
+                    f"allowed_dirs={[str(d) for d in self.security_policy.allowed_dirs]}"
+                )
 
             # Initialize Inkscape detector. Only fall back to PATH detection when nothing
             # explicitly configured the binary — this used to run unconditionally and
@@ -613,6 +629,161 @@ class InkscapeMCPServer:
                 input_path=input_path,
                 output_path=output_path,
                 value=value,
+                cli_wrapper=self.cli_wrapper,
+                config=self.config,
+            )
+
+        @self.mcp.tool(
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        async def inkscape_layers(
+            operation: InkscapeLayersOperation,
+            input_path: str,
+            output_path: str = "",
+            layer_id: str = "",
+            label: str = "",
+            new_label: str = "",
+            parent_id: str = "",
+            position: int = -1,
+        ) -> dict[str, Any]:
+            """INKSCAPE_LAYERS — List and edit the layers of an SVG FILE (pure XML; no Inkscape needed).
+
+            Layers are `<g inkscape:groupmode="layer">` groups, including nested sublayers.
+            To change layers in the OPEN GUI document use `inkscape_live` instead.
+
+            Operations:
+            - list: every layer with id, label, visible, locked, opacity, depth, parent_id, object count.
+            - get: one layer (needs layer_id).
+            - create: new layer. label optional; parent_id makes it a sublayer; position places it among
+              its sibling layers (0 = bottom of the stack, -1 = top, the default).
+            - rename: layer_id + new_label.
+            - delete: remove a layer AND everything in it (layer_id).
+            - show / hide: toggle visibility (layer_id).
+            - lock / unlock: toggle editability (layer_id).
+            - reorder: move layer_id to `position` among its siblings (0 = bottom, -1 = top).
+
+            Writes in place unless output_path is given. Ids are unique across the whole document.
+
+            Returns:
+                Dict with success, operation, message, data, execution_time_ms, and error on failure.
+            """
+            return await inkscape_layers_tool(
+                operation=operation,
+                input_path=input_path,
+                output_path=output_path,
+                layer_id=layer_id,
+                label=label,
+                new_label=new_label,
+                parent_id=parent_id,
+                position=position,
+                cli_wrapper=self.cli_wrapper,
+                config=self.config,
+            )
+
+        @self.mcp.tool(
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=False,
+                openWorldHint=False,
+            ),
+        )
+        async def inkscape_animation(
+            operation: InkscapeAnimationOperation,
+            input_path: str = "",
+            output_path: str = "",
+            target_id: str = "",
+            preset_name: str = "",
+            attribute: str = "",
+            values: str = "",
+            key_times: str = "",
+            key_splines: str = "",
+            transform_type: str = "rotate",
+            path_data: str = "",
+            path_id: str = "",
+            rotate_auto: bool = False,
+            color_from: str = "",
+            color_to: str = "",
+            animation_name: str = "",
+            css_keyframes: str = "",
+            duration: float = 1.0,
+            repeat: str = "indefinite",
+            fill_mode: str = "freeze",
+            amplitude: float = 40.0,
+            cx: float | None = None,
+            cy: float | None = None,
+            x: float = 400,
+            y: float = 300,
+            r: float = 50,
+            fill: str = "#4488ff",
+            width: int = 800,
+            height: int = 600,
+        ) -> dict[str, Any]:
+            """INKSCAPE_ANIMATION — Add SMIL / CSS animation to elements of an SVG FILE (browser-playable).
+
+            Every operation animates the element `target_id` inside `input_path` (written in place
+            unless output_path is given). Inkscape itself does not play SMIL/CSS animation; open the
+            result in a browser. For the open GUI document use `inkscape_live` `edit_xml` instead.
+
+            Operations:
+            - list_presets: bounce, fade_in, fade_out, slide, rotate, pulse, shake.
+            - apply_preset: preset_name on target_id. duration, repeat, amplitude (px for bounce/slide/
+              shake, percent growth for pulse). rotate/pulse pivot on the element's centre, read from
+              its geometry (circle, ellipse, rect, line, polygon); for paths/groups pass cx, cy in the
+              element's own coordinates. With NO input_path it writes a standalone demo circle to
+              output_path (x, y, r, fill, width, height).
+            - animate_attribute: attribute + values "a;b;c" (>= 2 entries); optional key_times (one per
+              value) and key_splines (one per interval; needs key_times).
+            - animate_transform: transform_type (translate|scale|rotate|skewX|skewY) + values. Added with
+              additive="sum", so the element's own transform is kept.
+            - animate_motion: move along path_data (an SVG path string) or an existing path_id;
+              rotate_auto turns the element to follow the path.
+            - animate_color: color_to (and color_from; default = current value) on attribute (default fill).
+            - css_animation: animation_name + css_keyframes ("from{opacity:0} to{opacity:1}"); adds the
+              @keyframes rule and a class on the element.
+            - list_animations: animations present (all, or under target_id).
+            - remove_animation: strip SMIL animation children from target_id.
+
+            duration is seconds; repeat is "indefinite" or a count; fill_mode is freeze|remove.
+
+            Returns:
+                Dict with success, operation, message, data, execution_time_ms, and error on failure.
+            """
+            return await inkscape_animation_tool(
+                operation=operation,
+                input_path=input_path,
+                output_path=output_path,
+                target_id=target_id,
+                preset_name=preset_name,
+                attribute=attribute,
+                values=values,
+                key_times=key_times,
+                key_splines=key_splines,
+                transform_type=transform_type,
+                path_data=path_data,
+                path_id=path_id,
+                rotate_auto=rotate_auto,
+                color_from=color_from,
+                color_to=color_to,
+                animation_name=animation_name,
+                css_keyframes=css_keyframes,
+                duration=duration,
+                repeat=repeat,
+                fill_mode=fill_mode,
+                amplitude=amplitude,
+                cx=cx,
+                cy=cy,
+                x=x,
+                y=y,
+                r=r,
+                fill=fill,
+                width=width,
+                height=height,
                 cli_wrapper=self.cli_wrapper,
                 config=self.config,
             )

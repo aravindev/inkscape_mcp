@@ -9,6 +9,8 @@ import sys
 
 from lxml import etree
 
+from .tools._svg_io import safe_parser
+
 INKSCAPE_SVG_MIME = "image/x-inkscape-svg"
 SVG_NS = "http://www.w3.org/2000/svg"
 _CLIPBOARD_TIMEOUT = 5.0
@@ -152,7 +154,7 @@ def normalize_fragment_to_viewbox(
     its natural size. If the fragment is larger than the target on either axis,
     it is uniformly scaled down to fit while preserving aspect ratio.
     """
-    parser = etree.XMLParser(remove_blank_text=False, recover=False)
+    parser = safe_parser(remove_blank_text=False, recover=False)
     root = etree.fromstring(svg_xml.encode("utf-8"), parser=parser)
 
     # Determine source extents from viewBox, or derive from width/height.

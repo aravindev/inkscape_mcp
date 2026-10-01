@@ -1,6 +1,6 @@
 """Inkscape MCP Server — drive Inkscape from an AI agent.
 
-FastMCP 3.2+ server exposing 8 portmanteau tools that shell out to the
+FastMCP 3.2+ server exposing 10 portmanteau tools that shell out to the
 Inkscape CLI or drive a running Inkscape window via D-Bus:
 
 - inkscape_file       — load, save, convert, info, validate
@@ -10,6 +10,8 @@ Inkscape CLI or drive a running Inkscape window via D-Bus:
 - inkscape_extension  — discover and invoke installed inkex extensions
 - inkscape_gradient   — gradient stop manipulation
 - inkscape_metadata   — Dublin-Core RDF metadata
+- inkscape_layers     — layer management (create, rename, delete, show/hide, lock, reorder)
+- inkscape_animation  — SMIL / CSS animation on elements of an SVG
 - inkscape_live       — drive the running Inkscape GUI via D-Bus
 
 Entry point: ``inkscape_mcp.main:main``.

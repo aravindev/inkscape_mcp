@@ -18,7 +18,7 @@ Let your AI agent design, edit, and analyze vector graphics through Inkscape —
   <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-1.x-1F6FEB?style=flat-square&logo=anthropic&logoColor=white" alt="MCP"></a>
   <a href="https://github.com/PrefectHQ/fastmcp"><img src="https://img.shields.io/badge/FastMCP-3.2-7c5cfc?style=flat-square" alt="FastMCP"></a>
   <a href="https://inkscape.org"><img src="https://img.shields.io/badge/Inkscape-1.4.4-000000?style=flat-square&logo=inkscape&logoColor=white" alt="Inkscape"></a>
-  <a href="#getting-started"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-informational?style=flat-square" alt="Platform: Linux | Windows"></a>
+  <a href="#getting-started"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational?style=flat-square" alt="Platform: Linux | macOS | Windows"></a>
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/style-ruff-D7FF64?style=flat-square&logo=ruff&logoColor=black" alt="Ruff"></a>
   <a href="https://github.com/pre-commit/pre-commit"><img src="https://img.shields.io/badge/pre--commit-enabled-success?style=flat-square&logo=pre-commit&logoColor=white" alt="pre-commit"></a>
 </p>
@@ -29,7 +29,7 @@ Pair it with a **running Inkscape window** and the agent works alongside you —
 
 ## How it works
 
-1. The agent calls one of eight portmanteau tools — `inkscape_file`, `inkscape_vector`, `inkscape_analysis`, `inkscape_system`, `inkscape_extension`, `inkscape_gradient`, `inkscape_metadata`, or `inkscape_live` — with an `operation` string that picks the actual behavior.
+1. The agent calls one of ten portmanteau tools — `inkscape_file`, `inkscape_vector`, `inkscape_analysis`, `inkscape_system`, `inkscape_extension`, `inkscape_gradient`, `inkscape_metadata`, `inkscape_layers`, `inkscape_animation`, or `inkscape_live` — with an `operation` string that picks the actual behavior.
 2. For headless work the server dispatches through `InkscapeCliWrapper`, which builds and runs an `inkscape --actions=...` (or `--export-...`) command. For live-canvas work it talks to a running Inkscape window over D-Bus and stages SVG fragments through the clipboard.
 3. Inkscape reads your input file (or the open document), runs the operation, and writes the output.
 4. The server returns dimensions, file paths, validation results, or whatever the operation produces — typed and trimmed for the agent's context window.
@@ -77,7 +77,19 @@ uv add inkscape-mcp
 
 The PyPI name is `inkscape-mcp` (hyphen). The Python import name is `inkscape_mcp` (underscore — PEP 8 / valid identifier). Both `pip install inkscape-mcp` and `pip install inkscape_mcp` resolve to the same project (PEP 503 name normalization).
 
-### Windows
+### macOS and Windows: the built-in bus (no `dbus-daemon` needed)
+
+Live control goes over D-Bus, and macOS and Windows have no session bus. The server therefore **hosts a small pure-Python bus in-process** (`embedded_bus.py`) and launches Inkscape under it — nothing extra to install. It listens only on a private `0700` unix socket (macOS) or loopback TCP (Windows).
+
+- A hand-launched Inkscape is not on that bus; the first `inkscape_live` call starts one for you. Use `open_file` to work on a document.
+- `INKSCAPE_MCP_BUS=embedded|system` forces either mode. With a real session bus (normal Linux desktop, or `DBUS_SESSION_BUS_ADDRESS` set) the server uses it and leaves your Inkscape alone.
+- **macOS limit:** GTK's macOS backend exports no `/window/N` objects, so window-scoped actions are routed to the document or app scope instead, and `document-save` is done by exporting over the file. `inkscape_live(operation="ping")` reports `window_scope: false` there.
+- The launcher caps an oversized open-file limit (Inkscape 1.4.2 on macOS crashes when run extensions inherit a limit of ~1M) and adds the app bundle's `bin` to `PATH` so extensions find Python.
+- Windows with MSYS2's `dbus-daemon` already installed keeps using it; the embedded bus is used otherwise.
+
+Verified on macOS (Apple Silicon, Inkscape 1.4.2). The Windows TCP path is implemented but not yet verified on real hardware.
+
+### Windows (MSYS2 daemon, optional)
 
 The headless tools install and run exactly as above. The **live** bridge (`inkscape_live`) needs one extra piece: a Windows `dbus-daemon`, which isn't part of a stock Windows install. The simplest source is [MSYS2](https://www.msys2.org/) — install it, then:
 
@@ -105,6 +117,20 @@ The Claude Code entry the install command above creates looks like:
 ```
 
 Pin a non-default Inkscape with `INKSCAPE_BIN=/path/to/inkscape` in the server env; the server only falls back to searching `$PATH` when nothing pins it. Inspect from the agent via `inkscape_system(operation="diagnostics")` — its `config_sources` block reports each tracked setting's effective value alongside where it came from (`env_var`, `config_file`, `cli_flag`, `auto_detected` or `default`).
+
+### Security
+
+By default the server can read and write any path you give it, as before. To confine it, set a scope and, if you want, strict mode:
+
+| Setting | Env override | Effect |
+|---|---|---|
+| `allowed_directories: [...]` | `INKSCAPE_MCP_ALLOWED_DIRS` (path-separated) | Every path argument of every tool must resolve (symlinks followed) inside one of these. Relative paths are anchored in the first. Paths inside JSON parameters (`rasterize`'s `filename`, extension params) are checked too. |
+| `security_mode: strict` | `INKSCAPE_MCP_SECURITY=strict` | Also: raw `apply_action` limited to an allowlist (no `file-*`, `export-*`, `window-*`, extensions), `execute_inkex` and `execute_extension` disabled, only stock `org.inkscape.*` extensions. Without a scope it confines to the working directory. |
+| `max_file_size_mb` | — | Input files above this are refused. |
+
+Always on, regardless of mode: action strings containing `;`, a newline or NUL are rejected (Inkscape has no escape for `;`, so one would inject extra actions); exports are written to a temporary file and moved into place only on success, so a failed run never leaves a truncated file; a timed-out Inkscape is killed together with its helper processes; and `max_concurrent_processes` is enforced.
+
+Known limits: a path scope cannot stop an SVG you insert from *referencing* a local file (`<image href=…>`), and `execute_inkex` runs arbitrary Python in Inkscape when not in strict mode.
 
 ## Try asking your agent to…
 
@@ -150,6 +176,8 @@ The agent picks the right tool. It can drive over 1,000 of Inkscape's actions ov
 - **`inkscape_extension`** — discover and invoke any installed inkex extension (headless or on the live canvas).
 - **`inkscape_gradient`** — gradient-stop manipulation; linear↔radial conversion.
 - **`inkscape_metadata`** — read/write Dublin-Core RDF metadata.
+- **`inkscape_layers`** — create, rename, delete, show/hide, lock and reorder layers (including nested sublayers) in an SVG file. Pure XML.
+- **`inkscape_animation`** — add SMIL / CSS animation (presets, attribute, transform, motion path, colour) to elements of an SVG file.
 - **`inkscape_live`** — drive the running GUI over D-Bus: live edits, paste-in-place, XML edits, `rasterize` so the agent can see the canvas (preserves undo).
 
 Full operation list in [`docs/TOOLS.md`](docs/TOOLS.md).

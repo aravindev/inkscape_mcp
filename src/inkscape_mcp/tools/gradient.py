@@ -8,6 +8,8 @@ from typing import Any
 from lxml import etree
 from pydantic import BaseModel
 
+from ._svg_io import safe_parser
+
 SVG_NS = "http://www.w3.org/2000/svg"
 SVG = f"{{{SVG_NS}}}"
 
@@ -130,7 +132,7 @@ def _user_space(grad: etree._Element) -> bool:
 
 
 def _parse(input_path: str) -> etree._ElementTree:
-    parser = etree.XMLParser(remove_blank_text=False)
+    parser = safe_parser(remove_blank_text=False)
     return etree.parse(input_path, parser)
 
 

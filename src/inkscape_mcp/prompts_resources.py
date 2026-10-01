@@ -103,6 +103,10 @@ Convenience tools (unique XML logic):
                         convert linear<->radial / list)
   inkscape_metadata   — Dublin-Core RDF metadata ({c["inkscape_metadata"]} ops: title / creator /
                         description / rights / keywords)
+  inkscape_layers     — layers ({c["inkscape_layers"]} ops: list / get / create / rename / delete / show /
+                        hide / lock / unlock / reorder)
+  inkscape_animation  — SMIL + CSS animation on elements ({c["inkscape_animation"]} ops: presets /
+                        attribute / transform / motion / color / css / list / remove)
 
 Prompts: prompt://inkscape/svg-file-workflow, vector-editing-workflow, analysis-workflow
 

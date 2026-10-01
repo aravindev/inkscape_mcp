@@ -13,11 +13,12 @@ from typing import Any
 from lxml import etree
 from pydantic import BaseModel
 
-from .. import bus_manager
+from .. import bus_manager, live_session
 from ..clipboard import SVG_NS
 from ..dbus_client import InkscapeDBus
 from ..extension_bridge import invoke_extension
 from ..win_dbus_client import WinInkscapeDBus
+from ._svg_io import safe_parser
 
 
 class LiveResult(BaseModel):
@@ -110,7 +111,7 @@ def _save_active_document(bus: InkscapeDBus, window_id: int) -> tuple[bool, str]
     if os.environ.get(_AUTO_SAVE_ENV) == "0":
         return False, "auto-save disabled via INKSCAPE_MCP_AUTO_SAVE=0"
     try:
-        windows = bus.list_windows()
+        windows = _open_windows(bus)
     except Exception:
         windows = []
     if len(windows) > 1:
@@ -156,10 +157,45 @@ def _resolve_window_id(bus: InkscapeDBus, requested: int) -> int:
     except Exception:
         return requested  # Best-effort: fall through with what was asked.
     if not windows:
+        # Platforms whose GTK backend exports no window objects (macOS) still export documents.
+        if _has_documents(bus):
+            return requested
         raise RuntimeError("no Inkscape windows are open")
     if requested in windows:
         return requested
     return windows[0]
+
+
+def _open_windows(bus: Any) -> list[int]:
+    """Window ids, or document ids where the platform exports no window objects (macOS).
+
+    Each open document has one window, so documents stand in for windows when deciding
+    whether the edit target is ambiguous.
+    """
+    windows = bus.list_windows()
+    if windows:
+        return list(windows)
+    lister = getattr(bus, "list_documents", None)
+    return list(lister()) if lister else []
+
+
+def _has_documents(bus: Any) -> bool:
+    lister = getattr(bus, "list_documents", None)
+    try:
+        return bool(lister()) if lister else False
+    except Exception:
+        return False
+
+
+def _legacy_windows_bus_available(config: Any) -> bool:
+    """True when Windows has the MSYS2 ``dbus-daemon`` + ``gdbus`` the legacy path needs."""
+    if os.environ.get(live_session.BUS_ENV, "").lower() == "embedded":
+        return False
+    return bool(bus_manager.find_dbus_daemon() and bus_manager.find_gdbus(_resolve_inkscape_exe(config)))
+
+
+def _uses_legacy_windows_bus(config: Any) -> bool:
+    return bus_manager.is_windows() and _legacy_windows_bus_available(config)
 
 
 def _resolve_inkscape_exe(config: Any) -> str:
@@ -183,13 +219,16 @@ def _get_bus(config: Any = None) -> Any:
     build and bound to a possibly-changing bus address, so it is not cached.
     """
     global _BUS
-    if bus_manager.is_windows():
+    if _uses_legacy_windows_bus(config):
         inkscape_exe = _resolve_inkscape_exe(config)
         gdbus = bus_manager.find_gdbus(inkscape_exe)
         if not gdbus:
             raise RuntimeError("gdbus.exe not found (expected next to inkscape.exe or on PATH)")
         address = bus_manager.ensure_bus(gdbus)
         return WinInkscapeDBus(gdbus, address)
+    if live_session.use_embedded():
+        # No session bus on this machine: host one in-process so Inkscape has something to join.
+        live_session.ensure_embedded_bus()
     if _BUS is None:
         _BUS = InkscapeDBus()
     return _BUS
@@ -227,6 +266,34 @@ def _result(
 # Ops that describe the whole Inkscape instance rather than one document, so naming a
 # window is unambiguous even with several open.
 _WINDOW_AGNOSTIC_OPS = frozenset({"ping", "list_actions", "open_file"})
+
+# Every operation the dispatcher below handles. Checked first, so a typo is rejected before
+# anything starts Inkscape or touches the bus.
+_KNOWN_OPERATIONS = frozenset(
+    {
+        "ping",
+        "get_document_xml",
+        "get_selection",
+        "set_selection",
+        "insert_svg",
+        "delete_selected",
+        "apply_action",
+        "list_actions",
+        "open_file",
+        "save_snapshot",
+        "edit_xml",
+        "path_edit",
+        "path_offset",
+        "inspect_selection",
+        "inspect_layers",
+        "inspect_defs",
+        "inspect_view",
+        "inspect_pages",
+        "inspect_element",
+        "execute_inkex",
+        "rasterize",
+    }
+)
 
 
 def _looks_like_selector(target: str) -> bool:
@@ -325,15 +392,21 @@ def _op_ping(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
             start=start,
         )
     windows = bus.list_windows()
+    documents = bus.list_documents() if hasattr(bus, "list_documents") else []
     app_actions = bus.list_actions("app")
     window_actions = bus.list_actions("window", windows[0]) if windows else []
+    # macOS: GTK exports documents but no windows, so window-scoped actions are routed to
+    # document/app scope by the client instead of being available natively.
+    window_scope = bool(windows)
     return _result(
         operation,
         True,
-        f"Inkscape bridge live ({len(windows)} window(s))",
+        f"Inkscape bridge live ({len(windows)} window(s), {len(documents)} document(s))",
         data={
             "ok": True,
             "windows": windows,
+            "documents": documents,
+            "window_scope": window_scope,
             "app_actions": len(app_actions),
             "window_actions": len(window_actions),
         },
@@ -393,7 +466,7 @@ def _fragment_children(payload: str) -> list[Any]:
     text = payload.strip()
     if not text:
         return []
-    parser = etree.XMLParser(remove_blank_text=False, recover=False)
+    parser = safe_parser(remove_blank_text=False, recover=False)
     try:
         root = etree.fromstring(text.encode("utf-8"), parser=parser)
     except etree.XMLSyntaxError:
@@ -1331,6 +1404,14 @@ async def inkscape_live(
 ) -> dict[str, Any]:
     """Drive a running Inkscape GUI via D-Bus + clipboard staging."""
     start = time.perf_counter()
+    if operation not in _KNOWN_OPERATIONS:
+        return _result(
+            operation,
+            False,
+            f"unknown operation {operation!r}",
+            error="unknown operation",
+            start=start,
+        )
     try:
         bus = _get_bus(config)
     except Exception as exc:
@@ -1350,10 +1431,14 @@ async def inkscape_live(
         except Exception as exc:
             return _result(operation, False, f"ping failed: {exc}", error=str(exc), start=start)
 
-    # Auto-manage (Windows): if the bridge isn't live yet, start the bus + Inkscape.
-    if bus_manager.is_windows() and not bus.is_available():
+    # Auto-manage: when we own the bus (legacy Windows daemon or the embedded bus), start
+    # Inkscape under it if it is not live yet — a hand-started GUI cannot join our bus.
+    if (_uses_legacy_windows_bus(config) or live_session.use_embedded()) and not bus.is_available():
         try:
-            _auto_launch_inkscape(config)
+            if _uses_legacy_windows_bus(config):
+                _auto_launch_inkscape(config)
+            elif not await asyncio.to_thread(live_session.ensure_inkscape, _resolve_inkscape_exe(config)):
+                raise RuntimeError("Inkscape did not register on the embedded bus in time")
         except Exception as exc:
             return _result(
                 operation,
@@ -1386,7 +1471,7 @@ async def inkscape_live(
 
     if requested_window:
         try:
-            open_windows = bus.list_windows()
+            open_windows = _open_windows(bus)
         except Exception:
             open_windows = []
         if requested_window not in open_windows:

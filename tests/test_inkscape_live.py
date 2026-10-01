@@ -21,7 +21,8 @@ async def test_ping(mcp):
     res = await mcp.call_tool("inkscape_live", {"operation": "ping"})
     p = _payload(res)
     assert p["success"] is True
-    assert p["data"]["windows"]
+    # macOS exports document objects but no window objects (GTK's Quartz backend).
+    assert p["data"]["windows"] or p["data"]["documents"]
 
 
 async def test_list_actions(mcp):
@@ -31,22 +32,30 @@ async def test_list_actions(mcp):
     app_names = {a["name"] for a in p["data"]["app"]}
     window_names = {w["name"] for w in p["data"]["window"]}
     assert "select-by-id" in app_names
-    assert "paste-in-place" in window_names
+    if await _has_window_scope(mcp):
+        assert "paste-in-place" in window_names
     # Annotated form: each entry has a description (may be empty).
     sample = p["data"]["app"][0]
     assert "name" in sample and "description" in sample
 
 
+async def _has_window_scope(mcp) -> bool:
+    ping = _payload(await mcp.call_tool("inkscape_live", {"operation": "ping"}))
+    return bool(ping["data"].get("window_scope"))
+
+
 async def test_list_actions_filter(mcp):
+    # layer-new is window-scoped, so use a name that exists on every platform when windows are not exported.
+    needle = "layer-new" if await _has_window_scope(mcp) else "select-clear"
     res = await mcp.call_tool(
         "inkscape_live",
-        {"operation": "list_actions", "target": "layer-new"},
+        {"operation": "list_actions", "target": needle},
     )
     p = _payload(res)
     assert p["success"] is True
     # Filter is case-insensitive and matches name or description.
     names = {a["name"] for a in p["data"]["app"]} | {w["name"] for w in p["data"]["window"]}
-    assert any("layer-new" in n for n in names)
+    assert any(needle in n for n in names)
     # Filter must trim away other actions.
     assert "select-by-id" not in names
 

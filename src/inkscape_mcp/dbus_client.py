@@ -7,13 +7,17 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 from jeepney import DBusAddress, MessageType, new_method_call
-from jeepney.io.blocking import DBusConnection, open_dbus_connection
+from jeepney.io.blocking import DBusConnection
 from jeepney.wrappers import DBusErrorResponse
+
+from . import live_session
+from .bus_connect import open_bus_connection
 
 # Bus name and root object path are fixed by Inkscape's GApplication setup.
 BUS_NAME = "org.inkscape.Inkscape"
 APP_PATH = "/org/inkscape/Inkscape"
 WINDOW_PATH_PREFIX = "/org/inkscape/Inkscape/window"
+DOCUMENT_PATH_PREFIX = "/org/inkscape/Inkscape/document"
 
 _FALSEY = frozenset({"", "0", "false", "no", "off", "none"})
 
@@ -40,7 +44,7 @@ class InkscapeDBus:
 
     def _connect(self) -> DBusConnection:
         if self._conn is None:
-            self._conn = open_dbus_connection(bus="SESSION")
+            self._conn = open_bus_connection(live_session.resolve_address())
         return self._conn
 
     def _close(self) -> None:
@@ -69,7 +73,22 @@ class InkscapeDBus:
             return APP_PATH
         if scope == "window":
             return f"{WINDOW_PATH_PREFIX}/{window_id}"
-        raise ValueError(f"scope must be 'app' or 'window', got {scope!r}")
+        if scope == "document":
+            return f"{DOCUMENT_PATH_PREFIX}/{window_id}"
+        raise ValueError(f"scope must be 'app', 'window' or 'document', got {scope!r}")
+
+    def _effective_scope(self, scope: str, window_id: int) -> tuple[str, int]:
+        """Map window scope onto what this platform actually exports.
+
+        GTK's macOS backend never publishes ``/window/N`` objects over D-Bus, so every
+        window-scoped action would fail with "no such object". The application's *document*
+        objects are exported everywhere and carry the document-level actions, so route there;
+        with neither, fall back to app scope.
+        """
+        if scope != "window" or self.list_windows():
+            return scope, window_id
+        docs = self.list_documents()
+        return ("document", docs[0]) if docs else ("app", 0)
 
     def is_available(self) -> bool:
         addr = DBusAddress(
@@ -85,6 +104,7 @@ class InkscapeDBus:
             return False
 
     def list_actions(self, scope: str = "app", window_id: int = 1) -> list[str]:
+        scope, window_id = self._effective_scope(scope, window_id)
         addr = DBusAddress(
             object_path=self._scope_path(scope, window_id),
             bus_name=BUS_NAME,
@@ -96,6 +116,7 @@ class InkscapeDBus:
 
     def describe(self, action: str, scope: str = "app", window_id: int = 1) -> tuple[bool, str, list]:
         """Return (enabled, param_signature, defaults)."""
+        scope, window_id = self._effective_scope(scope, window_id)
         addr = DBusAddress(
             object_path=self._scope_path(scope, window_id),
             bus_name=BUS_NAME,
@@ -132,6 +153,18 @@ class InkscapeDBus:
         scope: str = "app",
         window_id: int = 1,
     ) -> None:
+        if scope == "window" and action == "document-save" and not self.list_windows():
+            self._save_via_export()
+            return
+        scope, window_id = self._effective_scope(scope, window_id)
+        if scope == "document" and action not in self.list_actions("document", window_id):
+            # Window-scope action that is really an app action here (or does not exist).
+            if action not in self.list_actions("app"):
+                raise RuntimeError(
+                    f"action {action!r} is a window-scoped action, which this platform's Inkscape does not "
+                    "export over D-Bus (GTK on macOS publishes no window objects)"
+                )
+            scope, window_id = "app", 0
         _, signature, _ = self.describe(action, scope=scope, window_id=window_id)
         variants: list[tuple[str, Any]] = []
         if signature:
@@ -147,8 +180,23 @@ class InkscapeDBus:
         msg = new_method_call(addr, "Activate", "sava{sv}", (action, variants, {}))
         self._send(msg)
 
+    def _save_via_export(self) -> None:
+        """``document-save`` is window-scoped; without windows, overwrite the file by exporting.
+
+        Writes Inkscape SVG (not plain) over the document's own path, which is what a plain
+        save does. Only possible when we know which file the active document is.
+        """
+        path = live_session.active_document()
+        if not path:
+            raise RuntimeError("cannot save: no window objects and the active document's path is unknown")
+        self.activate("export-filename", [path], scope="app")
+        self.activate("export-type", ["svg"], scope="app")
+        self.activate("export-overwrite", [True], scope="app")
+        self.activate("export-do", scope="app")
+
     def open_file(self, path: str) -> None:
         abs_path = os.path.abspath(path)
+        live_session.set_active_document(abs_path)
         addr = DBusAddress(
             object_path=APP_PATH,
             bus_name=BUS_NAME,
@@ -157,9 +205,16 @@ class InkscapeDBus:
         msg = new_method_call(addr, "Open", "asa{sv}", ([f"file://{abs_path}"], {}))
         self._send(msg)
 
+    def list_documents(self) -> list[int]:
+        """Ids of exported document objects (present on every platform, unlike windows)."""
+        return self._child_ids(DOCUMENT_PATH_PREFIX)
+
     def list_windows(self) -> list[int]:
+        return self._child_ids(WINDOW_PATH_PREFIX)
+
+    def _child_ids(self, path: str) -> list[int]:
         addr = DBusAddress(
-            object_path=WINDOW_PATH_PREFIX,
+            object_path=path,
             bus_name=BUS_NAME,
             interface="org.freedesktop.DBus.Introspectable",
         )

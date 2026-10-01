@@ -1,6 +1,6 @@
 # Available tools
 
-The server exposes eight portmanteau tools. Each takes an `operation` string
+The server exposes ten portmanteau tools. Each takes an `operation` string
 that picks the actual behavior — keeps the surface scannable for the agent.
 
 > **For the operational guide** — picking the right op, gotchas, recipes for
@@ -127,6 +127,39 @@ Dublin-Core RDF metadata in the SVG's `<rdf:RDF>` block.
 |-----------|---------|
 | `get` | Read all metadata fields. |
 | `set_title` / `set_creator` / `set_description` / `set_rights` / `set_keywords` | Write a single field. |
+
+## inkscape_layers
+
+Layer management on an SVG **file** (pure XML; the open GUI document is `inkscape_live`'s job).
+Layers are `<g inkscape:groupmode="layer">` groups, nested sublayers included. Writes in place
+unless `output_path` is given.
+
+| Operation | Purpose |
+|-----------|---------|
+| `list` / `get` | Layers with id, label, visible, locked, opacity, depth, parent, sublayer and object counts. |
+| `create` | New layer: optional `label`, `parent_id` (sublayer), `position` (0 = bottom, -1 = top). |
+| `rename` | `layer_id` + `new_label`. |
+| `delete` | Remove a layer and everything in it. |
+| `show` / `hide` | Toggle visibility. |
+| `lock` / `unlock` | Toggle editability. |
+| `reorder` | Move to `position` among sibling layers. |
+
+## inkscape_animation
+
+SMIL and CSS animation on elements of an SVG **file**, playable in browsers (Inkscape itself does
+not play it). Every operation targets `target_id` in `input_path`, except a standalone demo from
+`apply_preset` with no `input_path`.
+
+| Operation | Purpose |
+|-----------|---------|
+| `list_presets` | `bounce`, `fade_in`, `fade_out`, `slide`, `rotate`, `pulse`, `shake`. |
+| `apply_preset` | A preset on an element. `rotate`/`pulse` pivot on the element's centre (or `cx`, `cy`). |
+| `animate_attribute` | `<animate>` an attribute through `values` ("a;b;c"), with optional `key_times` / `key_splines`. |
+| `animate_transform` | `<animateTransform>` (translate/scale/rotate/skewX/skewY); the element's own transform is kept. |
+| `animate_motion` | Move along `path_data` or an existing `path_id`; `rotate_auto` follows the path. |
+| `animate_color` | Colour cycle from `color_from` (default: current) to `color_to`. |
+| `css_animation` | `@keyframes` rule plus a class on the element. |
+| `list_animations` / `remove_animation` | Inspect or strip animation. |
 
 ## inkscape_live
 

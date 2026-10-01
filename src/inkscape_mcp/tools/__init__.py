@@ -10,13 +10,17 @@ or D-Bus behavior, keeping the agent-facing surface compact and discoverable.
 - inkscape_extension  — discover and invoke installed inkex extensions
 - inkscape_gradient   — gradient stop manipulation
 - inkscape_metadata   — Dublin-Core RDF metadata
+- inkscape_layers     — create / rename / delete / show / hide / lock / reorder layers
+- inkscape_animation  — SMIL / CSS animation on elements of an SVG
 - inkscape_live       — drive the running Inkscape GUI via D-Bus
 """
 
 from .analysis import inkscape_analysis
+from .animation import inkscape_animation
 from .extension import inkscape_extension
 from .file_operations import inkscape_file
 from .gradient import inkscape_gradient
+from .layers import inkscape_layers
 from .live import inkscape_live
 from .metadata import inkscape_metadata
 from .system import inkscape_system
@@ -24,9 +28,11 @@ from .vector_operations import inkscape_vector
 
 __all__ = [
     "inkscape_analysis",
+    "inkscape_animation",
     "inkscape_extension",
     "inkscape_file",
     "inkscape_gradient",
+    "inkscape_layers",
     "inkscape_live",
     "inkscape_metadata",
     "inkscape_system",

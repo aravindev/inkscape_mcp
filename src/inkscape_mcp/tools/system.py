@@ -455,7 +455,7 @@ async def inkscape_system(
             help_info = {
                 "server": "Inkscape MCP Server",
                 "description": "Professional vector graphics and SVG editing through Model Context Protocol",
-                # All eight tools, not the four this used to list.
+                # Every tool, not the four this used to list.
                 "tools": [
                     f"inkscape_file: File I/O ({_counts['inkscape_file']} ops: load, save, convert, "
                     "info, validate, list_formats, batch_convert)",
@@ -469,6 +469,10 @@ async def inkscape_system(
                     "list, describe, run, run_live)",
                     f"inkscape_gradient: Gradient stops, linear<->radial ({_counts['inkscape_gradient']} ops)",
                     f"inkscape_metadata: Dublin-Core RDF metadata ({_counts['inkscape_metadata']} ops)",
+                    f"inkscape_layers: Layer management ({_counts['inkscape_layers']} ops: list, create, rename, "
+                    "delete, show, hide, lock, unlock, reorder)",
+                    f"inkscape_animation: SMIL/CSS animation on elements ({_counts['inkscape_animation']} ops: "
+                    "apply_preset, animate_attribute/transform/motion/color, css_animation, ...)",
                     f"inkscape_live: Drive the running GUI over D-Bus ({_counts['inkscape_live']} ops: "
                     "edit_xml, apply_action, path_edit, inspect_*, rasterize, ...)",
                 ],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -11,6 +12,8 @@ import pytest
 import pytest_asyncio
 from fastmcp import Client
 
+from inkscape_mcp import live_session
+from inkscape_mcp.inkscape_detector import InkscapeDetector
 from inkscape_mcp.main import InkscapeMCPServer
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -18,9 +21,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def pytest_configure(config: pytest.Config) -> None:
     """Refuse to run against Inkscape versions outside 1.4.x — the only supported line."""
-    binary = shutil.which("inkscape")
+    binary = os.environ.get("INKSCAPE_BIN") or InkscapeDetector().detect_inkscape_installation()
     if binary is None:
-        pytest.exit("Inkscape not found on $PATH. See docs/INSTALL.md.", returncode=2)
+        pytest.exit("Inkscape not found on $PATH or in a standard install location. Set INKSCAPE_BIN.", returncode=2)
+    # Make the resolved binary visible to the server under test and to subprocess helpers.
+    os.environ["INKSCAPE_BIN"] = binary
     out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10)
     match = re.search(r"Inkscape\s+(\d+)\.(\d+)", out.stdout)
     if not match or (int(match.group(1)), int(match.group(2))) != (1, 4):
@@ -93,3 +98,20 @@ def page_vs_drawing_svg(tmp_path: Path) -> Path:
     dest = tmp_path / "page_vs_drawing.svg"
     shutil.copy(FIXTURES / "page_vs_drawing.svg", dest)
     return dest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _live_gui():
+    """Opt-in (INKSCAPE_MCP_LIVE_TESTS=1): bring up a real Inkscape GUI for the live-bridge tests.
+
+    Uses the in-process embedded bus when the machine has no session bus (macOS/Windows), so the
+    live tests can run on any OS. Without the flag the live tests skip, as before.
+    """
+    if os.environ.get("INKSCAPE_MCP_LIVE_TESTS") != "1":
+        yield
+        return
+    if live_session.use_embedded():
+        exe = os.environ["INKSCAPE_BIN"]
+        assert live_session.ensure_inkscape(exe), "Inkscape GUI did not come up on the embedded bus"
+    yield
+    live_session.stop_embedded_bus()
