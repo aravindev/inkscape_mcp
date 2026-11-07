@@ -482,7 +482,7 @@ def test_coerce_bool_handles_textual_falsey_values(value, expected):
 async def test_tool_schemas_expose_the_parameters_operations_need(mcp):
     """The wrappers exposed 3-4 params while the implementations needed 20+, making
     several advertised operations impossible to satisfy over MCP."""
-    tools = {t.name: set((t.inputSchema or {}).get("properties", {})) for t in await mcp.list_tools()}
+    tools = {t.name: set((t.input_schema or {}).get("properties", {})) for t in await mcp.list_tools()}
 
     assert {"object_ids", "select_all", "operation_type", "source_id", "barcode_data"} <= tools["inkscape_vector"]
     assert {"input_paths", "output_dir", "quality"} <= tools["inkscape_file"]
@@ -1060,3 +1060,10 @@ async def test_autodetected_executable_is_reported_as_autodetected(monkeypatch):
     resolved = server.config._sources["inkscape_executable"]
     assert resolved.source == ConfigSource.AUTO_DETECTED
     assert resolved.value == server.config.inkscape_executable
+
+
+async def test_server_info_reports_package_version(server):
+    """serverInfo.version used to report FastMCP's own version instead of ours."""
+    from inkscape_mcp import __version__
+
+    assert server.mcp.version == __version__
