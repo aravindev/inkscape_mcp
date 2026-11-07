@@ -220,3 +220,29 @@ def test_macos_auth_mechanisms_preserved(monkeypatch, tmp_path):
     config = bm._write_macos_bus_config().read_text(encoding="utf-8")
     assert "<auth>EXTERNAL</auth>" in config
     assert "<auth>DBUS_COOKIE_SHA1</auth>" in config
+
+
+@pytest.mark.parametrize(
+    ("soft", "expected"),
+    [(1_048_576, 4096), (-1, 4096), (256, None), (4096, None)],
+)
+def test_open_file_limit_capped_for_macos_launch(monkeypatch, soft, expected):
+    resource = pytest.importorskip("resource")
+    if soft == -1:
+        soft = resource.RLIM_INFINITY
+    monkeypatch.setattr(resource, "getrlimit", lambda _: (soft, resource.RLIM_INFINITY))
+    setrlimit = Mock()
+    monkeypatch.setattr(resource, "setrlimit", setrlimit)
+    bm._cap_open_files()
+    if expected is None:
+        setrlimit.assert_not_called()
+    else:
+        setrlimit.assert_called_once_with(resource.RLIMIT_NOFILE, (expected, resource.RLIM_INFINITY))
+
+
+def test_macos_launch_caps_open_files(monkeypatch, launcher):
+    executable, popen = launcher
+    monkeypatch.setattr(bm, "is_macos", lambda: True)
+    monkeypatch.setattr(platform_support, "set_inkscape_python_preference", Mock())
+    assert bm.ensure_inkscape("gdbus", "test-address", executable, "drawing.svg")
+    assert popen.call_args.kwargs["preexec_fn"] is bm._cap_open_files

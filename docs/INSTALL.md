@@ -36,14 +36,6 @@ observed on some installations, not a proven defect in every macOS build. Disabl
 the workaround with `INKSCAPE_MCP_SET_PYTHON_PREF=0`. Headless initialization and
 diagnostics do not change interpreter preferences; diagnostics never start a bus.
 
-When upgrading from an earlier revision of this branch, close the previous
-MCP-launched Inkscape yourself before the next live call so it restarts with the
-isolated profile. Existing processes are never killed or migrated automatically.
-If that revision changed your normal profile's interpreter preference, restore it
-manually (the old `~/.cache/inkscape_mcp/inkscape-python-pref.json` may contain a
-previous explicit value). The server deliberately does not overwrite user settings
-to guess at a migration.
-
 System extensions are read from
 `/Applications/Inkscape.app/Contents/Resources/share/inkscape/extensions`;
 bridge plugins are installed to

@@ -57,6 +57,7 @@ _MACOS_DBUS_DAEMONS = (
 _INKSCAPE_REGISTER_TIMEOUT_S = 25.0
 _BUS_PRINT_TIMEOUT_S = 10.0
 _POLL_INTERVAL_S = 0.3
+_MAX_OPEN_FILES = 4096
 
 # Detached, no console window — survives MCP-server restarts.
 _DETACHED = 0x00000008 | 0x08000000  # DETACHED_PROCESS | CREATE_NO_WINDOW
@@ -174,15 +175,13 @@ def ensure_bus(gdbus_path: str | None = None) -> str:
     """Return a reachable session-bus address, reusing or starting a dbus-daemon.
 
     The address is cached in ``ADDRESS_FILE`` so repeated MCP-server starts reuse one
-    daemon instead of leaking a new one each time. The address is also exported as
-    ``DBUS_SESSION_BUS_ADDRESS`` so jeepney's ``bus="SESSION"`` connects to it.
+    daemon instead of leaking a new one each time.
     """
     STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     if ADDRESS_FILE.exists():
         cached = ADDRESS_FILE.read_text(encoding="utf-8").strip()
         if cached and _bus_reachable(gdbus_path, cached):
-            os.environ["DBUS_SESSION_BUS_ADDRESS"] = cached
             return cached
 
     daemon = find_dbus_daemon()
@@ -231,7 +230,6 @@ def ensure_bus(gdbus_path: str | None = None) -> str:
         raise BusError("dbus-daemon did not print a bus address in time")
 
     ADDRESS_FILE.write_text(address, encoding="utf-8")
-    os.environ["DBUS_SESSION_BUS_ADDRESS"] = address
     log.info("Started dbus-daemon session bus at %s", address)
     return address
 
@@ -379,6 +377,20 @@ def _pid_alive(pid: int, executable: str | None = None) -> bool:
     return True
 
 
+def _cap_open_files() -> None:
+    """Cap the soft open-file limit in the child before exec (macOS only).
+
+    Inkscape 1.4.2 on macOS segfaults ("Thread stack size exceeded") on its first
+    extension run when it inherits a very large soft ``RLIMIT_NOFILE``, as IDE and
+    agent hosts often set: glib sizes a stack array by that limit.
+    """
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft == resource.RLIM_INFINITY or soft > _MAX_OPEN_FILES:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (_MAX_OPEN_FILES, hard))
+
+
 def _launched_pid() -> int | None:
     try:
         return int(PID_FILE.read_text(encoding="utf-8").strip())
@@ -440,7 +452,9 @@ def ensure_inkscape(
     argv = [inkscape_executable, open_path or default_canvas()]
 
     log.info("Launching Inkscape under MCP session bus: %s", argv)
-    popen_kwargs: dict = {"start_new_session": True} if is_macos() else {"creationflags": _DETACHED}
+    popen_kwargs: dict = (
+        {"start_new_session": True, "preexec_fn": _cap_open_files} if is_macos() else {"creationflags": _DETACHED}
+    )
     proc = subprocess.Popen(  # noqa: S603 — inkscape path validated above
         argv,
         env=env,
