@@ -132,11 +132,15 @@ def _activate_with_optional_save(
     args: list[Any] | None = None,
     scope: str = "app",
     window_id: int = 1,
+    scope_id: int | None = None,
 ) -> bool:
     """Fire `action`, then fire document-save if `action` mutates the document.
     Returns True if save was fired. Save failure is swallowed — the primary edit
-    succeeded, and a stale on-disk file shouldn't block the agent."""
-    bus.activate(action, args, scope=scope, window_id=window_id)
+    succeeded, and a stale on-disk file shouldn't block the agent.
+
+    `scope_id` addresses the action's object when it differs from the window (document
+    scope); the save always goes to `window_id`, where `document-save` lives."""
+    bus.activate(action, args, scope=scope, window_id=window_id if scope_id is None else scope_id)
     if not _action_mutates_document(action):
         return False
     saved, _ = _save_active_document(bus, window_id)
@@ -160,6 +164,18 @@ def _resolve_window_id(bus: InkscapeDBus, requested: int) -> int:
     if requested in windows:
         return requested
     return windows[0]
+
+
+def _resolve_document_id(bus: InkscapeDBus) -> int:
+    """Return the id of the single open document, for document-scope actions.
+
+    Window and document ids are separate counters that only coincide in simple sessions,
+    so with several documents open there is no reliable way to pick the right one.
+    Raises ``RuntimeError`` when there isn't exactly one."""
+    documents = bus.list_documents()
+    if len(documents) != 1:
+        raise RuntimeError(f"document-scope actions need exactly one open document; {len(documents)} are open")
+    return documents[0]
 
 
 def _resolve_inkscape_exe(config: Any) -> str:
@@ -615,20 +631,30 @@ def _op_apply_action(
         )
     app_actions = set(bus.list_actions("app"))
     window_actions = set(bus.list_actions("window", window_id))
+    scope_id: int | None = None
     if target in app_actions:
         scope = "app"
     elif target in window_actions:
         scope = "window"
     else:
-        return _result(
-            operation,
-            False,
-            f"action {target!r} is not registered on app or window scope",
-            error="unknown action",
-            start=start,
-        )
+        # A few actions (undo, redo, vacuum-defs, page-move-*) exist only on the document.
+        try:
+            scope_id = _resolve_document_id(bus)
+            document_actions = set(bus.list_actions("document", scope_id))
+            note = ""
+        except Exception as exc:
+            document_actions, note = set(), f" ({exc})"
+        if target not in document_actions:
+            return _result(
+                operation,
+                False,
+                f"action {target!r} is not registered on app, window or document scope{note}",
+                error="unknown action",
+                start=start,
+            )
+        scope = "document"
     args = [payload] if payload != "" else None
-    saved = _activate_with_optional_save(bus, target, args, scope=scope, window_id=window_id)
+    saved = _activate_with_optional_save(bus, target, args, scope=scope, window_id=window_id, scope_id=scope_id)
     return _result(
         operation,
         True,
@@ -697,7 +723,9 @@ async def _op_list_actions(
     """List all registered D-Bus actions, annotated with descriptions.
 
     ``target`` is an optional case-insensitive substring filter applied to both
-    name and description. Use it to narrow the 1244-action surface (e.g.
+    name and description. Returns ``app``, ``window`` and ``document`` lists; ``document``
+    holds only the actions no other scope has (undo, redo, vacuum-defs, ...). Use the
+    filter to narrow the ~1,280-action surface (e.g.
     ``target="layer-"`` for layer ops, ``target="snap"`` for snap toggles).
     """
     # First call shells out to `inkscape --action-list` with a 10s timeout; keep that off
@@ -705,6 +733,12 @@ async def _op_list_actions(
     descriptions = await asyncio.to_thread(_load_action_descriptions, cli_executable)
     app_names = sorted(bus.list_actions("app"))
     window_names = sorted(bus.list_actions("window", window_id))
+    # Most document actions duplicate app ones; list only those reachable nowhere else.
+    try:
+        document_ids = set(bus.list_actions("document", _resolve_document_id(bus)))
+    except Exception:
+        document_ids = set()
+    document_names = sorted(document_ids - set(app_names) - set(window_names))
 
     def _annotate(names: list[str]) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []
@@ -719,6 +753,7 @@ async def _op_list_actions(
 
     app = _annotate(app_names)
     window = _annotate(window_names)
+    document = _annotate(document_names)
 
     if target:
         needle = target.lower()
@@ -728,15 +763,16 @@ async def _op_list_actions(
 
         app = [a for a in app if _match(a)]
         window = [w for w in window if _match(w)]
+        document = [d for d in document if _match(d)]
 
-    msg = f"{len(app)} app + {len(window)} window actions"
+    msg = f"{len(app)} app + {len(window)} window + {len(document)} document actions"
     if target:
         msg += f" matching {target!r}"
     return _result(
         operation,
         True,
         msg,
-        data={"app": app, "window": window, "filter": target},
+        data={"app": app, "window": window, "document": document, "filter": target},
         start=start,
     )
 

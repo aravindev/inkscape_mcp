@@ -13,6 +13,10 @@ from jeepney.wrappers import DBusErrorResponse
 # Bus name and root object path are fixed by Inkscape's GApplication setup.
 BUS_NAME = "org.inkscape.Inkscape"
 APP_PATH = "/org/inkscape/Inkscape"
+# Inkscape 1.4 exports each GUI window and each document as separate action groups:
+# window-only actions (document-save, paste-in-place, layer-new) live under /window/N,
+# document-only ones (undo, redo, vacuum-defs, page-move-*) under /document/N.
+WINDOW_PATH_PREFIX = "/org/inkscape/Inkscape/window"
 DOCUMENT_PATH_PREFIX = "/org/inkscape/Inkscape/document"
 
 _FALSEY = frozenset({"", "0", "false", "no", "off", "none"})
@@ -68,8 +72,10 @@ class InkscapeDBus:
         if scope == "app":
             return APP_PATH
         if scope == "window":
+            return f"{WINDOW_PATH_PREFIX}/{window_id}"
+        if scope == "document":
             return f"{DOCUMENT_PATH_PREFIX}/{window_id}"
-        raise ValueError(f"scope must be 'app' or 'window', got {scope!r}")
+        raise ValueError(f"scope must be 'app', 'window' or 'document', got {scope!r}")
 
     def is_available(self) -> bool:
         addr = DBusAddress(
@@ -158,8 +164,14 @@ class InkscapeDBus:
         self._send(msg)
 
     def list_windows(self) -> list[int]:
+        return self._list_children(WINDOW_PATH_PREFIX)
+
+    def list_documents(self) -> list[int]:
+        return self._list_children(DOCUMENT_PATH_PREFIX)
+
+    def _list_children(self, prefix: str) -> list[int]:
         addr = DBusAddress(
-            object_path=DOCUMENT_PATH_PREFIX,
+            object_path=prefix,
             bus_name=BUS_NAME,
             interface="org.freedesktop.DBus.Introspectable",
         )

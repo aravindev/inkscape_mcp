@@ -52,11 +52,18 @@ def test_list_windows_ignores_coexisting_documents(mock_bus):
     assert calls == [(WINDOW_PATH, "Introspect", ())]
 
 
-@pytest.mark.parametrize("scope", ["app", "window"])
+def test_list_documents_reads_document_tree(mock_bus):
+    bus, calls = mock_bus
+
+    assert bus.list_documents() == [99]
+    assert calls == [(DOCUMENT_PATH, "Introspect", ())]
+
+
+@pytest.mark.parametrize("scope", ["app", "window", "document"])
 @pytest.mark.parametrize("operation", ["list_actions", "describe", "activate"])
 def test_action_routes_ignore_coexisting_documents(mock_bus, scope, operation):
     bus, calls = mock_bus
-    expected_path = APP_PATH if scope == "app" else f"{WINDOW_PATH}/7"
+    expected_path = {"app": APP_PATH, "window": f"{WINDOW_PATH}/7", "document": f"{DOCUMENT_PATH}/7"}[scope]
 
     if operation == "list_actions":
         assert bus.list_actions(scope=scope, window_id=7) == ["paste", "paste-in-place"]
@@ -70,3 +77,11 @@ def test_action_routes_ignore_coexisting_documents(mock_bus, scope, operation):
             (expected_path, "Describe", ("paste",)),
             (expected_path, "Activate", ("paste", [], {})),
         ]
+
+
+def test_unknown_scope_rejected(mock_bus):
+    bus, calls = mock_bus
+
+    with pytest.raises(ValueError, match="'app', 'window' or 'document'"):
+        bus.list_actions(scope="desktop")
+    assert calls == []
