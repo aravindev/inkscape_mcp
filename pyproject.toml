@@ -20,6 +20,7 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
     "Topic :: Multimedia :: Graphics",
     "Topic :: Multimedia :: Graphics :: Graphics Conversion",
@@ -34,7 +35,17 @@ dependencies = [
     "pillow>=12.2.0,<13.0.0",
     "pyyaml>=6.0.0,<7.0.0",
     "loguru>=0.7.0",
-    "inkex>=1.2.0",
+    # inkex 1.4.1 (latest on PyPI) caps lxml<6, and lxml 5.x has no Python 3.14 wheels.
+    # On 3.14, extensions import the inkex bundled with Inkscape instead (see
+    # tools/extension.py), so only its runtime dependencies are installed here.
+    "inkex>=1.2.0; python_version < '3.14'",
+    "lxml>=6.0; python_version >= '3.14'",
+    "numpy>=1.21.2; python_version >= '3.14'",
+    "cssselect>=1.2.0; python_version >= '3.14'",
+    "tinycss2>=1.0.1; python_version >= '3.14'",
+    "pyparsing>=3.0.9; python_version >= '3.14'",
+    "packaging>=20.3; python_version >= '3.14'",
+    "pyserial>=3.4; python_version >= '3.14'",
     "jeepney>=0.8.0",
     # Pulled in transitively by inkex, but scour_svg imports it directly — declare it.
     # inkex pins <0.38, so track that ceiling rather than fighting the resolver.

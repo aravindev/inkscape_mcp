@@ -24,6 +24,19 @@ sudo apt install libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev pk
 
 `libgirepository-2.0-dev` is required by `pygobject>=3.56`; the older `1.0-dev` alone is not enough on Ubuntu 24.04.
 
+### Install fails building `lxml==5.4.0`
+
+```text
+Failed to build `lxml==5.4.0`
+Error: Please make sure the libxml2 and libxslt development packages are installed.
+```
+
+This affects inkscape-mcp 1.3.1 and earlier on Python 3.14. `inkex` 1.4.1 (its latest
+release) requires `lxml<6`, and lxml 5.x publishes no Python 3.14 wheels, so the installer
+compiles lxml from source. Newer releases skip the pip `inkex` on 3.14 and run extensions
+against the copy Inkscape ships. Upgrade, or keep an older release on Python 3.12/3.13:
+`uvx --python 3.12 inkscape_mcp`.
+
 ### Python version
 
 Requires **Python 3.12+** per `pyproject.toml`. Check with `python3 --version`.

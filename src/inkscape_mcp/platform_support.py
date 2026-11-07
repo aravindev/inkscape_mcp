@@ -149,6 +149,19 @@ def system_extensions_dirs() -> tuple[Path, ...]:
                 Path("/usr/local/share/inkscape/extensions"),
             ]
         )
+    elif is_windows():
+        # <root>\bin\inkscape.exe ships its extensions under <root>\share\inkscape\extensions.
+        roots = [
+            Path(binary).parent.parent
+            for binary in (
+                os.environ.get("INKS_INKSCAPE_BIN"),
+                os.environ.get("INKSCAPE_BIN"),
+                resolve_inkscape_binary(),
+            )
+            if binary
+        ]
+        roots.append(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Inkscape")
+        dirs.extend(root / "share" / "inkscape" / "extensions" for root in roots)
     else:
         dirs.extend([Path("/usr/share/inkscape/extensions"), Path("/usr/local/share/inkscape/extensions")])
     # Preserve order while dropping duplicates.
