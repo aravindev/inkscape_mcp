@@ -16,6 +16,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -43,6 +44,9 @@ dependencies = [
 [tool.uv]
 override-dependencies = [
     "lxml>=6.1.0",
+    # inkex requires PyGObject outside Windows, but only its GUI module imports it.
+    # Limit it to Linux so `uv sync` on macOS skips the pygobject/pycairo source build.
+    "pygobject; sys_platform == 'linux'",
 ]
 
 [dependency-groups]

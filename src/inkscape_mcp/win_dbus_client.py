@@ -1,8 +1,11 @@
-"""Windows D-Bus client for the running Inkscape GUI, via the bundled ``gdbus.exe``.
+"""gdbus-backed D-Bus client for the running Inkscape GUI.
+
+Used on Windows (bundled ``gdbus.exe``) and macOS (Homebrew GLib ``gdbus``),
+where jeepney either cannot speak the transport or cannot authenticate.
 
 This class is a drop-in for ``InkscapeDBus`` — identical method surface
 (``is_available``/``list_actions``/``describe``/``activate``/``open_file``/
-``list_windows``) — selected by ``tools.live._get_bus()`` on Windows.
+``list_windows``) — selected by ``tools.live._get_bus()`` on managed platforms.
 
 Object-path note (Inkscape 1.4.x): app actions live at ``/org/inkscape/Inkscape`` and
 window/document-scope actions at ``/org/inkscape/Inkscape/document/N`` — NOT
@@ -35,8 +38,8 @@ class GDBusError(RuntimeError):
     """A gdbus invocation returned a D-Bus error or non-zero exit."""
 
 
-class WinInkscapeDBus:
-    """gdbus.exe-backed bridge to a running Inkscape GUI on a Windows TCP session bus."""
+class GDBusInkscapeDBus:
+    """gdbus-backed bridge to a running Inkscape GUI on a private session bus."""
 
     def __init__(self, gdbus_path: str, bus_address: str) -> None:
         self._gdbus = gdbus_path
@@ -155,10 +158,16 @@ class WinInkscapeDBus:
 
     def open_file(self, path: str) -> None:
         import os
+        from pathlib import Path
 
-        abs_path = os.path.abspath(path).replace("\\", "/")
-        uri = f"file:///{abs_path.lstrip('/')}"
-        self._call(APP_PATH, "org.freedesktop.Application.Open", f"['{uri}']", "{}")
+        if os.name == "nt":
+            abs_path = os.path.abspath(path).replace("\\", "/")
+            uri = f"file:///{abs_path.lstrip('/')}"
+        else:
+            # Correct percent-encoding for spaces / non-ASCII in macOS paths.
+            uri = Path(path).resolve().as_uri()
+        escaped = uri.replace("\\", "\\\\").replace("'", "\\'")
+        self._call(APP_PATH, "org.freedesktop.Application.Open", f"['{escaped}']", "{}")
 
     def list_windows(self) -> list[int]:
         """Numeric child nodes under .../document — the live document/window ids."""
@@ -167,3 +176,7 @@ class WinInkscapeDBus:
         for m in re.finditer(r"node\s+(\d+)\s*\{", out):
             ids.append(int(m.group(1)))
         return sorted(set(ids))
+
+
+# Backwards-compatible name; the class is no longer Windows-only.
+WinInkscapeDBus = GDBusInkscapeDBus

@@ -219,6 +219,7 @@ Errors:
 """
 
 import asyncio
+import re
 import time
 from typing import Any
 
@@ -351,28 +352,72 @@ async def inkscape_system(
                 "inkscape_executable_set": bool(config and config.inkscape_executable) if config else False,
             }
 
+            from .. import bus_manager, platform_support
+            from ..extension_bridge import bridge_status, needs_inkscape_restart
+
             try:
-                from ..dbus_client import InkscapeDBus
-                from ..extension_bridge import bridge_status, needs_inkscape_restart
-
                 bridge = bridge_status()
-
-                # jeepney's send_and_get_reply blocks with no timeout, so probing the bus
-                # inline can wedge the whole event loop on a stalled Inkscape. Run the probe
-                # in a worker thread and give up after a beat.
-                def _probe() -> dict[str, Any]:
-                    bus = InkscapeDBus()
-                    if bus.is_available():
-                        return {"live": True, "needs_restart": needs_inkscape_restart(bus)}
-                    return {"live": False}
-
-                try:
-                    bridge.update(await asyncio.wait_for(asyncio.to_thread(_probe), timeout=5.0))
-                except TimeoutError:
-                    bridge["live"] = False
-                    bridge["probe"] = "timed out after 5s"
             except Exception as exc:
                 bridge = {"error": str(exc)}
+
+            executable = str(config.inkscape_executable) if config and config.inkscape_executable else None
+            platform_info: dict[str, Any] = {}
+            platform_checks = {
+                "system": lambda: (
+                    "macOS"
+                    if platform_support.is_macos()
+                    else ("Windows" if platform_support.is_windows() else "Linux")
+                ),
+                "managed_bus": bus_manager.manages_bus,
+                "dbus_daemon": bus_manager.find_dbus_daemon,
+                "profile_dir": lambda: str(platform_support.profile_dir()),
+                "live_profile_dir": lambda: str(platform_support.live_profile_dir()),
+                "bundled_python": lambda: platform_support.bundled_python(executable),
+                "python_preference": platform_support.python_preference_status,
+            }
+            for name, check in platform_checks.items():
+                try:
+                    platform_info[name] = check()
+                except Exception as exc:
+                    platform_info[name] = None
+                    platform_info.setdefault("errors", {})[name] = str(exc)
+            bridge["platform"] = platform_info
+
+            # jeepney can block without a timeout; keep bus I/O off the event loop.
+            def _probe() -> dict[str, Any]:
+                if bus_manager.manages_bus():
+                    from ..win_dbus_client import GDBusInkscapeDBus
+
+                    gdbus = bus_manager.find_gdbus(executable)
+                    if not gdbus:
+                        return {"live": False, "probe": "gdbus not found; existing managed bus cannot be probed"}
+                    if not bus_manager.ADDRESS_FILE.exists():
+                        return {"live": False, "probe": "no saved managed bus address; no bus was started"}
+                    address = bus_manager.ADDRESS_FILE.read_text(encoding="utf-8").strip()
+                    # Only explicit endpoints are safe: autolaunch addresses could start a daemon.
+                    if not re.fullmatch(r"(?:unix|tcp|nonce-tcp):[a-z_]+=[^,\s;=]+(?:,[a-z_]+=[^,\s;=]+)*", address):
+                        return {
+                            "live": False,
+                            "probe": "empty or invalid saved managed bus address; no bus was started",
+                        }
+                    bus = GDBusInkscapeDBus(gdbus, address)
+                else:
+                    from .live import _get_bus
+
+                    bus = _get_bus(config)
+                if not bus.is_available():
+                    return {"live": False, "probe": "Inkscape is not available on the existing bus"}
+                try:
+                    return {"live": True, "needs_restart": needs_inkscape_restart(bus)}
+                except Exception as exc:
+                    return {"live": True, "probe": f"restart check failed: {exc}"}
+
+            try:
+                bridge.update(await asyncio.wait_for(asyncio.to_thread(_probe), timeout=10.0))
+            except TimeoutError:
+                bridge.update(live=False, probe="timed out after 10s")
+            except Exception as exc:
+                bridge.update(live=False, probe=f"probe failed: {exc}")
 
             return SystemResult(
                 success=True,

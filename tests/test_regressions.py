@@ -980,38 +980,6 @@ async def test_optimize_svg_reports_demoted_layers(mcp, minimal_svg, tmp_path):
 
 
 # --------------------------------------------------------------------------------------
-# F4 — clipboard refused XWayland even with a working xclip
-# --------------------------------------------------------------------------------------
-
-
-def test_wayland_without_wl_copy_falls_back_to_xclip(monkeypatch):
-    """Inkscape runs as an XWayland client, so an X11 clipboard reaches it fine.
-
-    The early return meant a stock Ubuntu 24.04 box (Wayland by default, and the
-    documented apt line installs xclip) had insert_svg permanently disabled.
-    """
-    import shutil as _shutil
-
-    from inkscape_mcp import clipboard
-
-    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
-    monkeypatch.setenv("DISPLAY", ":1")
-    monkeypatch.setattr(clipboard.shutil, "which", lambda name: None if name == "wl-copy" else "/usr/bin/xclip")
-    assert clipboard.detect_session() == "x11"
-
-    # wl-copy present → still preferred on a Wayland session.
-    monkeypatch.setattr(clipboard.shutil, "which", lambda name: f"/usr/bin/{name}")
-    assert clipboard.detect_session() == "wayland"
-
-    # Neither tool → no session, and the error names both options.
-    monkeypatch.setattr(clipboard.shutil, "which", lambda name: None)
-    assert clipboard.detect_session() == ""
-    with pytest.raises(RuntimeError, match="wl-clipboard"):
-        clipboard.stage_svg_fragment("<rect/>")
-    assert _shutil is not None
-
-
-# --------------------------------------------------------------------------------------
 # F5 — advertised operation counts drifted apart across four call sites
 # --------------------------------------------------------------------------------------
 

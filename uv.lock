@@ -10,7 +10,10 @@ resolution-markers = [
 ]
 
 [manifest]
-overrides = [{ name = "lxml", specifier = ">=6.1.0" }]
+overrides = [
+    { name = "lxml", specifier = ">=6.1.0" },
+    { name = "pygobject", marker = "sys_platform == 'linux'" },
+]
 
 [[package]]
 name = "aiofile"
@@ -498,7 +501,7 @@ dependencies = [
     { name = "numpy", marker = "python_full_version < '4'" },
     { name = "packaging" },
     { name = "pillow" },
-    { name = "pygobject", marker = "sys_platform != 'win32'" },
+    { name = "pygobject", marker = "sys_platform == 'linux'" },
     { name = "pyparsing" },
     { name = "pyserial" },
     { name = "scour" },
@@ -511,7 +514,7 @@ wheels = [
 
 [[package]]
 name = "inkscape-mcp"
-version = "1.3.0"
+version = "1.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },

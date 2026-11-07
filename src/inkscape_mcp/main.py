@@ -155,9 +155,9 @@ This is a shared canvas, so collaborate rather than guess:
    (e.g. `//*[@id='g']/*[position()>9]`). Note: `execute_inkex` does not currently persist
    document mutations — do not rely on it for edits.
 
-4. Clipboard-based `insert_svg` needs `wl-copy` (wl-clipboard) or `xclip` on PATH; on a
-   Wayland session it falls back to `xclip` via XWayland. With neither installed,
-   `insert_svg` is unavailable — insert content with `edit_xml` `append` instead.
+4. `insert_svg` appends through the edit_xml plugin, so it needs no clipboard tool.
+   On macOS the live bridge runs a private D-Bus session and its own Inkscape
+   instance; a normally launched Inkscape is not reachable.
 """
 
 

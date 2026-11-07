@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -11,6 +12,7 @@ import pytest
 import pytest_asyncio
 from fastmcp import Client
 
+from inkscape_mcp import platform_support
 from inkscape_mcp.main import InkscapeMCPServer
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -18,9 +20,14 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 def pytest_configure(config: pytest.Config) -> None:
     """Refuse to run against Inkscape versions outside 1.4.x — the only supported line."""
-    binary = shutil.which("inkscape")
+    binary = platform_support.resolve_inkscape_binary()
     if binary is None:
-        pytest.exit("Inkscape not found on $PATH. See docs/INSTALL.md.", returncode=2)
+        pytest.exit(
+            "Inkscape not found. Install Inkscape.app in /Applications or set INKSCAPE_BIN. See docs/INSTALL.md.",
+            returncode=2,
+        )
+    # Pin the binary for the in-process server: on macOS it is not on $PATH.
+    os.environ.setdefault("INKSCAPE_BIN", binary)
     out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10)
     match = re.search(r"Inkscape\s+(\d+)\.(\d+)", out.stdout)
     if not match or (int(match.group(1)), int(match.group(2))) != (1, 4):

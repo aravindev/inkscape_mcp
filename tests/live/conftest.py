@@ -29,7 +29,8 @@ from pathlib import Path
 
 import pytest
 
-from inkscape_mcp.dbus_client import InkscapeDBus
+from inkscape_mcp import bus_manager
+from inkscape_mcp.tools.live import _get_bus, _resolve_inkscape_exe
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 EXCHANGE = Path(os.path.expanduser("~/.cache/inkscape_mcp/exchange"))
@@ -48,14 +49,20 @@ _RESET_BODY = (
 
 @pytest.fixture(scope="session", autouse=True)
 def _bridge_required():
-    if not InkscapeDBus().is_available():
+    try:
+        bus = _get_bus(None)
+    except Exception as exc:
+        pytest.skip(f"live bridge unavailable ({exc})", allow_module_level=True)
+    if not bus.is_available() and not bus_manager.manages_bus():
         pytest.skip(
             "Inkscape GUI not running — start it to exercise the live tier",
             allow_module_level=True,
         )
+    # On Windows/macOS the session fixture below launches Inkscape under the managed
+    # bus, so "not available yet" is expected rather than a reason to skip.
 
 
-def _active_docname(bus: InkscapeDBus) -> str:
+def _active_docname(bus) -> str:
     """Filename of Inkscape's active document, or '' if it can't be determined."""
     result = EXCHANGE / "result.json"
     try:
@@ -79,13 +86,29 @@ def live_session(tmp_path_factory):
     path = tmp_path_factory.mktemp("live") / "live_doc.svg"
     shutil.copy(FIXTURES / "minimal.svg", path)
 
-    bus = InkscapeDBus()
-    before = set(bus.list_windows())
-    bus.open_file(str(path))
-    for _ in range(40):  # wait for the new window to register on the bus
-        if set(bus.list_windows()) - before:
-            break
-        time.sleep(0.25)
+    # Ensure the bridge plugins are on disk before Inkscape starts: it only scans the
+    # extensions directory at launch.
+    from inkscape_mcp.extension_bridge import install_plugins
+
+    install_plugins()
+
+    bus = _get_bus(None)
+    if not bus.is_available():
+        # Windows/macOS: launch Inkscape under the MCP-managed bus, opening the test
+        # document directly so the session starts with exactly one window.
+        exe = _resolve_inkscape_exe(None)
+        gdbus = bus_manager.find_gdbus(exe)
+        address = bus_manager.ensure_bus(gdbus)
+        if not bus_manager.ensure_inkscape(gdbus, address, exe, str(path)):
+            pytest.skip("could not launch Inkscape under the managed D-Bus session", allow_module_level=True)
+        bus = _get_bus(None)
+    else:
+        before = set(bus.list_windows())
+        bus.open_file(str(path))
+        for _ in range(40):  # wait for the new window to register on the bus
+            if set(bus.list_windows()) - before:
+                break
+            time.sleep(0.25)
 
     yield path
 

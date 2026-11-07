@@ -130,7 +130,7 @@ Dublin-Core RDF metadata in the SVG's `<rdf:RDF>` block.
 
 ## inkscape_live
 
-Drive a running Inkscape window via D-Bus + clipboard staging. 20
+Drive a running Inkscape window via D-Bus. 20
 operations. Highlights:
 
 - **Bridge:** `ping`.

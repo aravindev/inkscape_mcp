@@ -101,7 +101,7 @@ Read and write Dublin-Core RDF metadata in the SVG's `<rdf:RDF>` block.
 
 ## inkscape_live
 
-Drive a running Inkscape window via D-Bus + clipboard staging. Every edit is a normal undo entry.
+Drive a running Inkscape window via D-Bus. Every edit is a normal undo entry.
 
 **Highlights:** `apply_action` (any of ~1,070 Inkscape verbs) | `list_actions` (filtered) | `get_selection` | `set_selection` | `insert_svg` | `edit_xml` | `path_edit` | `inspect_selection` / `inspect_layers` / `inspect_defs` / `inspect_view` / `inspect_pages` / `inspect_element` | `execute_inkex` | `rasterize` (render doc/element/area to PNG so the agent can see the canvas)
 

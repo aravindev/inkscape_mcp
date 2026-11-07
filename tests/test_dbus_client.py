@@ -4,28 +4,32 @@ from __future__ import annotations
 
 import pytest
 
-from inkscape_mcp.dbus_client import InkscapeDBus
+from inkscape_mcp import bus_manager
+from inkscape_mcp.tools.live import _get_bus
 
 
 @pytest.fixture(scope="module")
-def bus() -> InkscapeDBus:
-    b = InkscapeDBus()
+def bus():
+    try:
+        b = _get_bus(None)
+    except Exception as exc:
+        pytest.skip(f"live bridge unavailable ({exc})")
     if not b.is_available():
         pytest.skip("Inkscape GUI not running — start it to exercise the live bridge")
     return b
 
 
-def test_is_available(bus: InkscapeDBus) -> None:
+def test_is_available(bus) -> None:
     assert bus.is_available()
 
 
-def test_list_actions_app(bus: InkscapeDBus) -> None:
+def test_list_actions_app(bus) -> None:
     actions = bus.list_actions(scope="app")
     assert "select-by-id" in actions
     assert len(actions) > 100
 
 
-def test_list_actions_window(bus: InkscapeDBus) -> None:
+def test_list_actions_window(bus) -> None:
     # Window ids are NOT stable: they climb as documents are opened and closed, so a
     # session that has closed its first document has no window 1 at all. Hardcoding it
     # made this fail with "Object does not exist at path .../window/1".
@@ -33,22 +37,26 @@ def test_list_actions_window(bus: InkscapeDBus) -> None:
     if not windows:
         pytest.skip("no Inkscape windows open")
     actions = bus.list_actions(scope="window", window_id=windows[0])
-    assert "paste" in actions or "paste-in-place" in actions
+    if bus_manager.manages_bus():
+        # Managed platforms expose document actions, which may only include extensions.
+        assert actions
+    else:
+        assert "paste" in actions or "paste-in-place" in actions
 
 
-def test_describe_select_by_id(bus: InkscapeDBus) -> None:
+def test_describe_select_by_id(bus) -> None:
     enabled, sig, defaults = bus.describe("select-by-id")
     assert sig == "s"
     assert isinstance(enabled, bool)
     assert isinstance(defaults, list)
 
 
-def test_activate_select_all(bus: InkscapeDBus) -> None:
+def test_activate_select_all(bus) -> None:
     # select-all takes a string scope parameter ("all", "all-in-all-layers", etc.).
     bus.activate("select-all", ["all"], scope="app")
 
 
-def test_list_windows(bus: InkscapeDBus) -> None:
+def test_list_windows(bus) -> None:
     # An Inkscape process with every document closed is a legitimate state — the bus is
     # up and app-scope actions still work, there are just no windows. Asserting >= 1
     # made that report as a failure.
