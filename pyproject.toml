@@ -28,8 +28,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "fastmcp>=3.3.1",
-    "mcp>=1.27.2",
+    "fastmcp>=4.1.6",
+    "mcp>=2.3.0",
     "prefab-ui>=0.20.1",
     "pydantic>=2.13.4,<3.0.0",
     "pillow>=12.2.0,<13.0.0",

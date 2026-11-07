@@ -17,6 +17,7 @@ from typing import Any
 from fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from . import __version__
 from .config import load_config
 from .inkscape_detector import InkscapeDetector
 from .logging_config import setup_logging
@@ -181,7 +182,7 @@ class InkscapeMCPServer:
         # and layers the INKSCAPE_* env overrides on top. Short-circuiting to a bare
         # InkscapeConfig() when no --config was passed made both permanently dead.
         self.config = load_config(config_path)
-        self.mcp = FastMCP("Inkscape MCP Server", instructions=SERVER_INSTRUCTIONS)
+        self.mcp = FastMCP("Inkscape MCP Server", instructions=SERVER_INSTRUCTIONS, version=__version__)
         self.tools: dict[str, Any] = {}
         self.logger = logging.getLogger(__name__)
         self.cli_wrapper: Any | None = None
@@ -289,10 +290,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=False,
-                openWorldHint=False,
+                read_only_hint=False,
+                destructive_hint=True,
+                idempotent_hint=False,
+                open_world_hint=False,
             ),
         )
         async def inkscape_file(
@@ -367,10 +368,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=False,
-                openWorldHint=False,
+                read_only_hint=False,
+                destructive_hint=True,
+                idempotent_hint=False,
+                open_world_hint=False,
             ),
         )
         async def inkscape_vector(
@@ -491,10 +492,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=True,
-                destructiveHint=False,
-                idempotentHint=True,
-                openWorldHint=False,
+                read_only_hint=True,
+                destructive_hint=False,
+                idempotent_hint=True,
+                open_world_hint=False,
             ),
         )
         async def inkscape_analysis(operation: InkscapeAnalysisOperation, input_path: str) -> dict[str, Any]:
@@ -523,10 +524,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=True,
-                openWorldHint=False,
+                read_only_hint=False,
+                destructive_hint=False,
+                idempotent_hint=True,
+                open_world_hint=False,
             ),
         )
         async def inkscape_system(
@@ -567,10 +568,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=False,
-                openWorldHint=False,
+                read_only_hint=False,
+                destructive_hint=True,
+                idempotent_hint=False,
+                open_world_hint=False,
             ),
         )
         async def inkscape_gradient(
@@ -602,10 +603,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=False,
-                idempotentHint=True,
-                openWorldHint=False,
+                read_only_hint=False,
+                destructive_hint=False,
+                idempotent_hint=True,
+                open_world_hint=False,
             ),
         )
         async def inkscape_metadata(
@@ -626,10 +627,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=False,
-                openWorldHint=False,
+                read_only_hint=False,
+                destructive_hint=True,
+                idempotent_hint=False,
+                open_world_hint=False,
             ),
         )
         async def inkscape_live(
@@ -676,10 +677,10 @@ class InkscapeMCPServer:
 
         @self.mcp.tool(
             annotations=ToolAnnotations(
-                readOnlyHint=False,
-                destructiveHint=True,
-                idempotentHint=False,
-                openWorldHint=False,
+                read_only_hint=False,
+                destructive_hint=True,
+                idempotent_hint=False,
+                open_world_hint=False,
             ),
         )
         async def inkscape_extension(

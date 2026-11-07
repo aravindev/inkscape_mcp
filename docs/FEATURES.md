@@ -2,7 +2,7 @@
 
 MCP server that drives Inkscape 1.4.4 from an AI agent — either
 headlessly through the CLI or live alongside a running Inkscape window via
-D-Bus. Built on FastMCP 3.2.
+D-Bus. Built on FastMCP 4.1.
 
 ## What the agent can do
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-**inkscape_mcp** is a **FastMCP 3.2+** server. Tools are implemented in Python; heavy work is delegated to the **Inkscape CLI** (queries and `--actions` chains) or to the running Inkscape GUI via **D-Bus**. The package lives under `src/inkscape_mcp/`.
+**inkscape_mcp** is a **FastMCP 4.1+** server. Tools are implemented in Python; heavy work is delegated to the **Inkscape CLI** (queries and `--actions` chains) or to the running Inkscape GUI via **D-Bus**. The package lives under `src/inkscape_mcp/`.
 
 ## Core components
 
