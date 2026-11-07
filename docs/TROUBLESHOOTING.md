@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Tested with Inkscape 1.4.4 on Ubuntu 24.04.
+Tested with Inkscape 1.4.4 on Ubuntu 24.04, Windows 11, and macOS (Apple Silicon).
 
 ## Installation
 

@@ -38,7 +38,7 @@ No external network. Just the Inkscape binary, an optional running Inkscape wind
 
 ## Getting started
 
-> Tested with **Inkscape 1.4.4** on Ubuntu 24.04 and macOS (Apple Silicon).
+> Tested with **Inkscape 1.4.4** on Ubuntu 24.04, Windows 11, and macOS (Apple Silicon).
 
 ```bash
 # 1. Install Inkscape + system headers for pycairo / pygobject

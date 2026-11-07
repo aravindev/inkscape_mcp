@@ -78,5 +78,5 @@ Full operation list per tool in [TOOLS.md](TOOLS.md). Schema parameters in
 
 ## Scope
 
-Tested with Inkscape 1.4.4 on Ubuntu 24.04. Older Inkscape releases are
+Tested with Inkscape 1.4.4 on Ubuntu 24.04, Windows 11, and macOS (Apple Silicon). Older Inkscape releases are
 not supported.
