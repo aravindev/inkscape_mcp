@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Any
 
 from jeepney import DBusAddress, MessageType, new_method_call
@@ -148,13 +148,13 @@ class InkscapeDBus:
         self._send(msg)
 
     def open_file(self, path: str) -> None:
-        abs_path = os.path.abspath(path)
+        uri = Path(path).resolve().as_uri()
         addr = DBusAddress(
             object_path=APP_PATH,
             bus_name=BUS_NAME,
             interface="org.freedesktop.Application",
         )
-        msg = new_method_call(addr, "Open", "asa{sv}", ([f"file://{abs_path}"], {}))
+        msg = new_method_call(addr, "Open", "asa{sv}", ([uri], {}))
         self._send(msg)
 
     def list_windows(self) -> list[int]:

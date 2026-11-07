@@ -6,7 +6,7 @@
 # Inkscape 1.4.x (the test suite requires this exact line)
 sudo add-apt-repository ppa:inkscape.dev/stable
 sudo apt update
-sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev pkg-config python3-dev xclip
+sudo apt install inkscape libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev pkg-config python3-dev
 
 # Clone + sync
 git clone https://github.com/aravindev/inkscape_mcp.git

@@ -128,7 +128,7 @@ Read and write Dublin-Core metadata in the SVG's `<rdf:RDF>` block.
 
 ## inkscape_live
 
-Drive a running Inkscape window via D-Bus + clipboard staging. Edits appear
+Drive a running Inkscape window via D-Bus. Edits appear
 on the canvas in real time and are individually undoable.
 
 | Operation | Purpose |
@@ -139,7 +139,7 @@ on the canvas in real time and are individually undoable.
 | `get_document_xml` | Snapshot the live SVG. |
 | `get_selection` | Read the current selection. |
 | `set_selection` | Select objects by id. |
-| `insert_svg` | Paste an SVG fragment at the cursor (via clipboard). |
+| `insert_svg` | Append an SVG fragment through the XML-edit extension. |
 | `delete_selected` | Delete the active selection. |
 | `open_file` | Open a file in the running window. |
 | `save_snapshot` | Save the current state to disk. |

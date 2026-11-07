@@ -4,7 +4,7 @@ The MCP server shells out to **Inkscape**. If the CLI is missing or wrong, every
 
 ## Install Inkscape
 
-Tested with Inkscape **1.4.4** on Ubuntu 24.04. Older versions (including the 1.2.2 Ubuntu default) are not supported.
+Tested with Inkscape **1.4.4** on Ubuntu 24.04, Windows 11, and macOS (Apple Silicon). Older versions (including the 1.2.2 Ubuntu default) are not supported.
 
 ```bash
 sudo add-apt-repository ppa:inkscape.dev/stable

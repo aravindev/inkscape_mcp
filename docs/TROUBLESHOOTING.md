@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Tested with Inkscape 1.4.4 on Ubuntu 24.04.
+Tested with Inkscape 1.4.4 on Ubuntu 24.04, Windows 11, and macOS (Apple Silicon).
 
 ## Installation
 
@@ -73,12 +73,10 @@ Some export and trace operations need extra packages:
 - `inkscape_system(operation="diagnostics")` reports `bridge.live` and `bridge.needs_restart`. If `needs_restart` is `true`, the server just installed or updated its inkex plugins — close and reopen Inkscape so it picks them up.
 - The MCP server auto-installs plugins to `~/.config/inkscape/extensions/inkscape_mcp/` on first boot. Inkscape only scans the extensions dir at startup.
 
-### Clipboard insert (`insert_svg`) fails
+### `insert_svg` fails
 
-- X11: `xclip` must be on PATH.
-- Wayland: `wl-clipboard` is preferred, but `xclip` also works — Inkscape runs as an
-  XWayland client, so the server falls back to it when `wl-copy` is absent.
-- The server auto-detects; if both are missing the operation surfaces a clear error.
+Insertion appends XML through the live extension bridge; it does not use the
+clipboard. Check `bridge.live` and restart Inkscape if `needs_restart` is true.
 
 ## Extensions
 

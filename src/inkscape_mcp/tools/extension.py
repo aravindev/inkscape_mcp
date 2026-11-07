@@ -21,7 +21,6 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,13 +28,12 @@ from typing import Any
 
 from lxml import etree
 
+from .. import platform_support
 from .live import _get_bus, _result
 
-_SYSTEM_EXT_DIRS = (
-    Path("/usr/share/inkscape/extensions"),
-    Path("/usr/local/share/inkscape/extensions"),
-)
-_USER_EXT_DIR = Path(os.path.expanduser("~/.config/inkscape/extensions"))
+# Resolved at import time; tests monkeypatch these to point at temp directories.
+_SYSTEM_EXT_DIRS = platform_support.system_extensions_dirs()
+_USER_EXT_DIR = platform_support.user_extensions_dir()
 
 # How long to wait for an extension subprocess. Some (LaTeX renderers, raster
 # filters) are genuinely slow; cap generously.
@@ -151,11 +149,11 @@ def _discover(refresh: bool = False) -> dict[str, _Extension]:
         return _CACHE
 
     found: dict[str, _Extension] = {}
-    for source_label, ext_dir in (
-        ("system", _SYSTEM_EXT_DIRS[0]),
-        ("system", _SYSTEM_EXT_DIRS[1]),
+    search: list[tuple[str, Path]] = [
+        *(("system", d) for d in _SYSTEM_EXT_DIRS),
         ("user", _USER_EXT_DIR),
-    ):
+    ]
+    for source_label, ext_dir in search:
         if not ext_dir.is_dir():
             continue
         for inx_path in ext_dir.glob("*.inx"):
@@ -180,9 +178,7 @@ def _build_command(ext: _Extension, params: dict[str, Any], input_path: Path) ->
     """Build the subprocess argv for invoking an inkex extension headlessly."""
     if ext.script_path is None:
         raise ValueError(f"extension {ext.id!r} has no script command")
-    interpreter = ext.interpreter or "python"
-    if interpreter == "python":
-        interpreter = sys.executable  # use our resolved Python
+    interpreter = platform_support.extension_interpreter(ext.interpreter)
     argv: list[str] = [interpreter, str(ext.script_path)]
     known = {p.name: p for p in ext.params}
     for key, val in params.items():
