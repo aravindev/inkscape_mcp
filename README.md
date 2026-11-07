@@ -182,7 +182,7 @@ Pin a non-default Inkscape with `INKSCAPE_BIN=/path/to/inkscape` in the server e
 - "Swap the whole palette to a warmer earth-tone scheme"
 - "Add a 3-stop gradient to the rect with id `hero`"
 
-The agent picks the right tool. It can drive over 1,000 of Inkscape's actions over D-Bus (1,083 app-scope plus 163 window-scope on Inkscape 1.4.4 — ask for the exact figure with `inkscape_live(operation="ping")`), fall back to headless CLI when the GUI isn't running, and run inkex extensions for things D-Bus doesn't cover.
+The agent picks the right tool. It can drive over 1,000 of Inkscape's actions over D-Bus (1,083 app-scope, 163 window-scope and 30 document-only actions such as undo on Inkscape 1.4.4 — ask for the exact figure with `inkscape_live(operation="ping")`), fall back to headless CLI when the GUI isn't running, and run inkex extensions for things D-Bus doesn't cover.
 
 ## Available tools
 
@@ -193,7 +193,7 @@ The agent picks the right tool. It can drive over 1,000 of Inkscape's actions ov
 - **`inkscape_extension`** — discover and invoke any installed inkex extension (headless or on the live canvas).
 - **`inkscape_gradient`** — gradient-stop manipulation; linear↔radial conversion.
 - **`inkscape_metadata`** — read/write Dublin-Core RDF metadata.
-- **`inkscape_live`** — drive the running GUI over D-Bus: live edits, paste-in-place, XML edits, `rasterize` so the agent can see the canvas (preserves undo).
+- **`inkscape_live`** — drive the running GUI over D-Bus: any Inkscape action (including undo/redo), XML edits, `rasterize` so the agent can see the canvas (preserves undo).
 
 Full operation list in [`docs/TOOLS.md`](docs/TOOLS.md).
 
@@ -201,14 +201,14 @@ Full operation list in [`docs/TOOLS.md`](docs/TOOLS.md).
 
 An agent that just installed this server doesn't know your workflow, so the server teaches it. MCP's `InitializeResult.instructions` is pushed into the client's system prompt on connect, and this server uses it to establish the working method rather than just the mechanics: **compose procedurally instead of hand-writing SVG** (place primitives, then let Inkscape align, distribute, boolean and clone them), **rasterize and actually look at the result** before declaring it done, **ask you to select** the objects you want help with, and **open the dialog or tool** you're asking about instead of describing a menu path.
 
-Deeper material is pull-based — `resource://inkscape/mcp-workflow` (operational guide, recipes, and the Inkscape rendering pitfalls that silently ruin output), `resource://inkscape/cli-actions` (the full verb catalog), plus `prompt://inkscape/design-workflow` for the step-by-step design loop, which most clients surface as a slash command. The pushed instructions name those explicitly so the agent knows to fetch them.
+Deeper material is pull-based — `resource://inkscape/mcp-workflow` (operational guide, recipes, and the Inkscape rendering pitfalls that silently ruin output), `resource://inkscape/cli-actions` and `resource://inkscape/gui-actions` (the full action catalog), plus `prompt://inkscape/design-workflow` for the step-by-step design loop, which most clients surface as a slash command. The pushed instructions name those explicitly so the agent knows to fetch them.
 
 ## Learn more
 
 - [docs/INSTALL.md](docs/INSTALL.md) — full install walkthrough.
 - [docs/TOOLS.md](docs/TOOLS.md) — every operation per tool.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — when things break.
-- [src/inkscape_mcp/reference/](src/inkscape_mcp/reference/) — captured Inkscape 1.4.4 `--action-list` and `--help`; ships in the wheel and is served as `resource://inkscape/cli-actions` / `cli-help`.
+- [src/inkscape_mcp/reference/](src/inkscape_mcp/reference/) — captured Inkscape 1.4.4 `--action-list`, the GUI-only window/document actions, and `--help`; ships in the wheel and is served as `resource://inkscape/cli-actions` / `gui-actions` / `cli-help`.
 
 ## Star history
 

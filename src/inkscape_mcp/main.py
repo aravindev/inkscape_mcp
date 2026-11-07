@@ -66,8 +66,10 @@ READ FIRST for anything beyond a one-liner: `resource://inkscape/mcp-workflow` i
 operational guide — which op covers which task, action gotchas, recipes, and Inkscape
 rendering pitfalls that will silently ruin output if you don't know them (feDropShadow
 is silently broken in 1.4; filters need `inkscape:auto-region="false"` or their bounds
-get clamped). `resource://inkscape/cli-actions` is the full verb catalog for when
-`list_actions` filtering isn't enough. Reading these costs one call and saves rework.
+get clamped). `resource://inkscape/cli-actions` (app-scope verbs with descriptions) and
+`resource://inkscape/gui-actions` (window and document verbs only a running GUI exports,
+such as `undo` and `tool-switch`) are the full catalog for when `list_actions` filtering
+isn't enough. Reading these costs one call and saves rework.
 
 ## You are a designer at a workstation, not an SVG text generator
 
@@ -158,6 +160,11 @@ This is a shared canvas, so collaborate rather than guess:
 4. `insert_svg` appends through the edit_xml plugin, so it needs no clipboard tool.
    On macOS the live bridge runs a private D-Bus session and its own Inkscape
    instance; a normally launched Inkscape is not reachable.
+
+5. `apply_action` takes any action name and finds its scope itself: app, then window,
+   then document. Document-only actions (`undo`, `redo`, `vacuum-defs`, `page-move-*`,
+   guide actions) need exactly one open document. `undo` reverts the last change,
+   including your own MCP edits, and auto-saves the result.
 """
 
 
@@ -634,7 +641,8 @@ class InkscapeMCPServer:
             """Drive the RUNNING Inkscape GUI — the user's already-open document — live over D-Bus.
 
             Work on the open document IN PLACE; do not recreate it. Prefer Inkscape's own
-            live tools over hand-writing SVG: use `apply_action` for actions and
+            live tools over hand-writing SVG: use `apply_action` for actions (it finds the
+            app, window or document scope itself, so `undo`/`redo` work too) and
             `inkscape_extension` `run_live` WITH NO PARAMS for filters/effects like drop
             shadow and blur — select the target first, then call it; that is the only
             run_live mode that sees the live document and selection. (Passing params
@@ -654,8 +662,8 @@ class InkscapeMCPServer:
 
             Operations: ping, get_document_xml, get_selection, set_selection, insert_svg,
             delete_selected, apply_action, list_actions, open_file, save_snapshot, edit_xml,
-            path_edit, inspect_selection/layers/defs/view/pages/element, execute_inkex,
-            rasterize.
+            path_edit, path_offset, inspect_selection/layers/defs/view/pages/element,
+            execute_inkex, rasterize.
             """
             return await inkscape_live_tool(
                 operation=operation,

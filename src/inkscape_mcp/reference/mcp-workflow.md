@@ -40,8 +40,8 @@ The canvas is shared, so collaborate rather than guess.
 
 | You want to… | Use |
 |---|---|
-| Fire any of Inkscape's ~1244 verbs (selection, transforms, booleans, attribute edits, tool/dialog opening, layer ops, page ops, snap toggles, zoom/view) | `inkscape_live(operation="apply_action", target="<verb>", payload="<arg>")` |
-| Discover the verb you need + its description | `inkscape_live(operation="list_actions", target="<substring>")` — returns `{app[{name, description}], window[{name, description}]}`. Filter is case-insensitive, matches name or description. Use `target="layer-"` for layer ops, `"snap"` for snapping, etc. |
+| Fire any of Inkscape's ~1,280 actions (selection, transforms, booleans, attribute edits, tool/dialog opening, layer ops, page ops, snap toggles, zoom/view, undo/redo) | `inkscape_live(operation="apply_action", target="<verb>", payload="<arg>")` |
+| Discover the verb you need + its description | `inkscape_live(operation="list_actions", target="<substring>")` — returns `{app[{name, description}], window[{name, description}], document[{name, description}]}`. Filter is case-insensitive, matches name or description. Use `target="layer-"` for layer ops, `"snap"` for snapping, etc. Full catalogs: `resource://inkscape/cli-actions` (app scope, with descriptions) and `resource://inkscape/gui-actions` (window and document scope, with parameter types) |
 | Insert new SVG geometry into the canvas | `inkscape_live(operation="insert_svg", payload="<svg fragment>")` |
 | Structurally edit the XML (add to `<defs>`, restructure, rewrite `d` data, set arbitrary attribute on an arbitrary node) | `inkscape_live(operation="edit_xml", target="<xpath>", payload="<json>")` |
 | Per-node bezier edits on a path (move node, set handle, smooth/cusp, insert node, subdivide) | `inkscape_live(operation="path_edit", target="<path-id>", payload="<json>")` |
@@ -51,6 +51,18 @@ The canvas is shared, so collaborate rather than guess.
 | Check the bridge is live | `inkscape_live(operation="ping")` |
 
 Default to `apply_action`. Use `edit_xml` when no Inkscape verb covers the edit (defs additions, structural rewrites, complex `d` math).
+
+### Action scopes
+
+A running Inkscape 1.4.4 exports its actions in three D-Bus groups. `apply_action` looks for the name in each, in this order, so you never pass a scope:
+
+| Scope | Count (1.4.4, Linux) | What lives there |
+|---|---|---|
+| app | 1,083 | Almost everything: selection, transforms, objects, paths, layers, export, extensions. Same set as `inkscape --action-list`. |
+| window | 163 | Canvas and view, `tool-switch`, `dialog-open`, `paste-in-place`, `layer-new`, `document-save`, `document-close`. |
+| document | 30 not found elsewhere | `undo`, `redo`, `vacuum-defs`, `fit-canvas-to-drawing`, `page-move-*`, guide and grid toggles, `all-objects-to-paths`, `remove-all-transforms`. |
+
+Document-scope actions need exactly one open document; with several open the call fails and says so. The response's `data.scope` reports which group handled the call. On Windows and macOS the bridge currently reaches window scope through the document object, so window-only actions such as `document-save` and `paste-in-place` may be missing there.
 
 ## Gotchas when firing actions
 
@@ -93,7 +105,7 @@ Kill switch: `INKSCAPE_MCP_AUTO_SAVE=0` for batched-save behavior.
 
 ## Untitled docs
 
-For Untitled documents (no saved path) the MCP auto-promotes them by saving to `~/.cache/inkscape_mcp/live-session-<pid>.svg` and re-opening. The original Untitled window stays open — close it manually.
+Auto-save writes the document to its own file, so it needs one. For a new, never-saved document, ask the user to save it (or to open the file they want edited) before relying on `saved: true`.
 
 ## Operation cheat sheet
 
@@ -104,6 +116,10 @@ For Untitled documents (no saved path) the MCP auto-promotes them by saving to `
 | Page rotate | `apply_action(target="page-rotate", payload="1")` — integer steps |
 | Switch drawing tool | `apply_action(target="tool-switch", payload="Pen")` |
 | Open a dialog | `apply_action(target="dialog-open", payload="DocumentProperties")` |
+| Undo / redo the last change (including MCP edits) | `apply_action(target="undo")` / `apply_action(target="redo")` — document scope; auto-saves the result |
+| Remove unused defs | `apply_action(target="vacuum-defs")` — only removes defs Inkscape treats as collectable; hand-written unused gradients can survive |
+| Fit the page to the drawing | `apply_action(target="fit-canvas-to-drawing")` |
+| Reorder pages | `apply_action(target="page-move-forward")` / `page-move-backward` |
 | Select by id | `set_selection(target="my-id")` |
 | Select by CSS | `set_selection(target="#a, .b")` |
 | Clear selection | `apply_action(target="select-clear")` |
@@ -116,6 +132,7 @@ For Untitled documents (no saved path) the MCP auto-promotes them by saving to `
 | Insert a node mid-segment (t∈(0,1)) | `path_edit(target="p1", payload='{"op":"insert_node","segment":[0,0],"t":0.5}')` |
 | Smooth / cusp a node (updates handles + `sodipodi:nodetypes`) | `path_edit(target="p1", payload='{"op":"smooth","node":[0,1]}')` |
 | Subdivide every segment of a subpath (default: all subpaths) | `path_edit(target="p1", payload='{"op":"subdivide"}')` |
+| Grow / shrink a path outline | `inkscape_live(operation="path_offset", target="p1", payload='{"offset":10,"join":"round"}')` — attaches Inkscape's Offset path effect; Inkscape applies its own unit conversion to the magnitude, so measure with `inspect_element` if size matters |
 | Snapshot to scratch | `save_snapshot()` returns the scratch path |
 | Read selection | `get_selection()` → `{count, ids, objects[{id,type,bbox}], text}` |
 | Inspect one element (bbox + computed style + ancestors) | `inkscape_live(operation="inspect_element", target="<id>")` — bbox is post-transform document coords; `computed_style` is full CSS-cascade resolution (what the renderer actually uses); `ancestors` includes `is_layer` markers |
@@ -242,11 +259,9 @@ Use a precise target instead:
 | Append to the SVG-root-level defs without relying on id | `/svg:svg/svg:defs` |
 | Append to a specific wrapper's defs | `//*[@id='<wrapper-id>']/svg:defs` |
 
-### Multi-window auto-detect (since `PLUGINS_VERSION=8`)
+### Multiple open documents
 
-`inkscape_live` now auto-detects the active window. If you pass `window_id=1` (the default) but window 1 isn't open, the tool falls back to the first available window from `bus.list_windows()`. The earlier failure mode — `Object does not exist at path /org/inkscape/Inkscape/window/1` when the user closes a doc — is gone.
-
-You can still pass `window_id` explicitly to target a specific window when multiple are open.
+Every live op acts on Inkscape's **active** document and reports it in `data.active_document`; Inkscape 1.4 has no way to target another window over D-Bus. Leave `window_id` at 0 (the default) to accept the active document. Passing a window number makes the call **refuse** when more than one document is open, rather than guess. With several documents open, auto-save also declines, and document-scope actions (`undo`, `redo`, ...) fail, so ask the user to close the documents they aren't working on.
 
 ## When the bridge is down
 

@@ -103,7 +103,7 @@ Read and write Dublin-Core RDF metadata in the SVG's `<rdf:RDF>` block.
 
 Drive a running Inkscape window via D-Bus. Every edit is a normal undo entry.
 
-**Highlights:** `apply_action` (any of ~1,070 Inkscape verbs) | `list_actions` (filtered) | `get_selection` | `set_selection` | `insert_svg` | `edit_xml` | `path_edit` | `inspect_selection` / `inspect_layers` / `inspect_defs` / `inspect_view` / `inspect_pages` / `inspect_element` | `execute_inkex` | `rasterize` (render doc/element/area to PNG so the agent can see the canvas)
+**Highlights:** `apply_action` (any of ~1,280 Inkscape actions across app, window and document scope, including `undo`/`redo`) | `list_actions` (filtered; returns `app`, `window`, `document`) | `get_selection` | `set_selection` | `insert_svg` | `edit_xml` | `path_edit` | `path_offset` | `inspect_selection` / `inspect_layers` / `inspect_defs` / `inspect_view` / `inspect_pages` / `inspect_element` | `execute_inkex` | `rasterize` (render doc/element/area to PNG so the agent can see the canvas)
 
 `payload` is a JSON string when an op needs structured arguments. Full payload shapes in `inkscape_mcp/reference/mcp-workflow.md` (also exposed as `resource://inkscape/mcp-workflow`).
 

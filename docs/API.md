@@ -134,22 +134,25 @@ on the canvas in real time and are individually undoable.
 | Operation | Purpose |
 |-----------|---------|
 | `ping` | Confirm the D-Bus bridge is reachable. |
-| `apply_action` | Run any `inkscape --action` verb on the live document. |
-| `list_actions` | Filtered list of D-Bus-reachable actions (use `target` substring). |
+| `apply_action` | Run any Inkscape action on the live document; the app, window or document scope is found automatically (so `undo`/`redo` work). |
+| `list_actions` | Filtered list of D-Bus-reachable actions, split into `app`, `window` and `document` (use `target` substring). |
 | `get_document_xml` | Snapshot the live SVG. |
 | `get_selection` | Read the current selection. |
-| `set_selection` | Select objects by id. |
+| `set_selection` | Select objects by id or CSS selector. |
 | `insert_svg` | Append an SVG fragment through the XML-edit extension. |
 | `delete_selected` | Delete the active selection. |
-| `open_file` | Open a file in the running window. |
+| `open_file` | Open a file in a new Inkscape window. |
 | `save_snapshot` | Save the current state to disk. |
-| `edit_xml` | Set/delete an attribute on an element by id. |
-| `path_edit` | Mutate `d` data on a path. |
+| `edit_xml` | Structural XML edit by XPath: `append`, `insert_before`/`insert_after`, `replace`, `remove`, `set_attr`, `set_text`. |
+| `path_edit` | Per-node edits on a path (move node, set handle, smooth/cusp, insert, subdivide). |
+| `path_offset` | Grow or shrink a path outline with Inkscape's Offset path effect. |
 | `inspect_selection` / `inspect_layers` / `inspect_defs` / `inspect_view` / `inspect_pages` / `inspect_element` | Bounded read-only inspectors. |
-| `execute_inkex` | Run an installed inkex extension on the live document. |
+| `execute_inkex` | Run inkex Python against the live document for queries (mutations are not persisted). |
 | `rasterize` | Render the doc / an element / an area to PNG so the agent can see the result. |
 
-Signature: `inkscape_live(operation, target="", payload="", window_id=1)`.
+Signature: `inkscape_live(operation, target="", payload="", window_id=0)`. `window_id=0`
+accepts the active document; a non-zero id makes the call refuse when several documents
+are open.
 
 `payload` is a JSON string when the operation needs structured arguments
 (e.g. `rasterize` takes `{"area": "x:y:w:h", "dpi": 192, "filename": "..."}`).
@@ -185,7 +188,8 @@ No authentication. Access is gated by:
 The server also exposes the captured Inkscape 1.4.4 reference as MCP resources
 so agents can learn the underlying surface without shelling out:
 
-- `resource://inkscape/cli-actions` — full `inkscape --action-list`.
+- `resource://inkscape/cli-actions` — full `inkscape --action-list` (app-scope actions).
+- `resource://inkscape/gui-actions` — window- and document-scope actions only a running GUI exports.
 - `resource://inkscape/cli-help` — full `inkscape --help`.
 - `resource://inkscape/mcp-workflow` — operational guide with recipes and gotchas.
 - `resource://inkscape/capabilities` — capability summary.

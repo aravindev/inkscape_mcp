@@ -1,0 +1,220 @@
+# Inkscape 1.4.4 GUI-only actions (D-Bus window and document scope)
+
+`inkscape --action-list` (resource://inkscape/cli-actions) lists app-scope actions only.
+A running Inkscape exports two more action groups over D-Bus, listed here. Captured from
+Inkscape 1.4.4 on Linux with one document open. Re-check a live session with
+`inkscape_live(operation="list_actions", target="<substring>")`: its `window` and
+`document` keys come from the running GUI.
+
+`inkscape_live(operation="apply_action", target=<name>, payload=<arg>)` finds the scope on
+its own: app first, then window, then document. Document actions need exactly one open
+document. An action that takes a parameter needs `payload` (string, integer, or number as
+noted); every other action takes none.
+
+On Windows and macOS the live bridge currently reaches window scope through the document
+object, so the window-only actions below may be unavailable there.
+
+## Window scope: /org/inkscape/Inkscape/window/N (163 actions)
+
+Canvas display, tool switching, dialogs, clipboard paste, layer creation, and the document
+lifecycle (document-save, document-close).
+
+canvas-color-manage
+canvas-color-mode
+canvas-command-palette
+canvas-commands-bar
+canvas-display-mode                   param: integer
+canvas-display-mode-cycle
+canvas-display-mode-toggle
+canvas-flip-horizontal
+canvas-flip-reset
+canvas-flip-vertical
+canvas-interface-mode
+canvas-palette
+canvas-rotate-absolute-degrees        param: number
+canvas-rotate-absolute-radians        param: number
+canvas-rotate-ccw
+canvas-rotate-cw
+canvas-rotate-lock
+canvas-rotate-relative-degrees        param: number
+canvas-rotate-relative-radians        param: number
+canvas-rotate-reset
+canvas-rulers
+canvas-scroll-bars
+canvas-snap-controls-bar
+canvas-split-mode                     param: integer
+canvas-statusbar
+canvas-toolbox
+canvas-tool-control-bar
+canvas-zoom-1-1
+canvas-zoom-1-2
+canvas-zoom-2-1
+canvas-zoom-absolute                  param: number
+canvas-zoom-center-page
+canvas-zoom-drawing
+canvas-zoom-in
+canvas-zoom-next
+canvas-zoom-out
+canvas-zoom-page
+canvas-zoom-page-width
+canvas-zoom-prev
+canvas-zoom-relative                  param: number
+canvas-zoom-selection
+dialog-open                           param: string
+dialog-toggle
+document-cleanup
+document-close
+document-dialog-templates
+document-import
+document-new
+document-open
+document-print
+document-revert
+document-save
+document-save-as
+document-save-copy
+document-save-template
+help-url-ask-question
+help-url-beginners-guide
+help-url-donate
+help-url-faq
+help-url-inkex
+help-url-keys
+help-url-man
+help-url-manual
+help-url-release-notes
+help-url-report-bug
+help-url-svg11-spec
+help-url-svg2-spec
+layer-bottom
+layer-delete
+layer-duplicate
+layer-from-group
+layer-hide-all
+layer-hide-toggle
+layer-hide-toggle-others
+layer-lock-all
+layer-lock-toggle
+layer-lock-toggle-others
+layer-lower
+layer-new
+layer-new-above
+layer-next
+layer-previous
+layer-raise
+layer-rename
+layer-to-group
+layer-top
+layer-unhide-all
+layer-unlock-all
+node-align-horizontal                 param: string
+node-align-vertical                   param: string
+node-distribute-horizontal
+node-distribute-vertical
+page-delete
+page-new
+paste
+paste-in-place
+paste-on-page
+path-effect-parameter-next
+path-inset
+path-inset-screen                     param: number
+path-offset
+path-offset-dynamic
+path-offset-linked
+path-offset-screen                    param: number
+path-reverse
+select-all
+select-all-layers
+select-invert
+select-invert-all
+selection-group-enter
+selection-group-exit
+selection-move-to-layer
+selection-move-to-layer-above
+selection-move-to-layer-below
+select-none
+select-same-fill
+select-same-fill-and-stroke
+select-same-object-type
+select-same-stroke-color
+select-same-stroke-style
+shape-builder-mode                    param: integer
+shape-builder-replace
+simple-snap-alignment
+simple-snap-bbox
+simple-snap-nodes
+snap-alignment
+snap-alignment-self
+snap-bbox
+snap-bbox-center
+snap-bbox-corner
+snap-bbox-edge
+snap-bbox-edge-midpoint
+snap-distribution
+snap-global-toggle
+snap-grid
+snap-grid-line
+snap-guide
+snap-line-midpoint
+snap-line-perpendicular
+snap-line-tangential
+snap-node-category
+snap-node-cusp
+snap-node-smooth
+snap-object-midpoint
+snap-others
+snap-page-border
+snap-page-margin
+snap-path
+snap-path-clip
+snap-path-intersection
+snap-path-mask
+snap-rotation-center
+snap-text-baseline
+tool-switch                           param: string
+tool-toggle                           param: string
+transform-grow-screen                 param: number
+transform-rotate-screen               param: number
+view-focus-toggle
+view-fullscreen
+view-full-screen-focus
+window-new
+window-next
+window-previous
+
+## Document scope: /org/inkscape/Inkscape/document/N (30 actions found nowhere else)
+
+Undo/redo, document cleanup, guides, and page ordering. The document group exports about
+480 actions in total; the rest duplicate app-scope actions and are omitted.
+
+add-strokes-to-paths
+all-clones-to-objects
+all-objects-to-paths
+clip-to-page
+create-guides-around-page
+delete-all-guides
+fit-canvas-to-drawing
+insert-bounding-boxes
+insert-hatch-polyfill
+insert-mesh-polyfill
+insert-path-data
+insert-text-fallback
+lock-all-guides
+normalize-all-paths
+page-move-backward
+page-move-forward
+page-move-objects
+prune-inkscape-namespaces
+prune-proprietary-namespaces
+redo
+remove-all-transforms
+remove-marker-context-paint
+reverse-auto-start-markers
+set-display-unit                      param: string
+set-svg-version-1
+set-svg-version-2
+show-all-guides
+show-grids
+undo
+vacuum-defs
