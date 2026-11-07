@@ -8,15 +8,15 @@ Let your AI agent design, edit, and analyze vector graphics through Inkscape —
 
 <p>
   <a href="https://pypi.org/project/inkscape-mcp/"><img src="https://img.shields.io/pypi/v/inkscape-mcp.svg?style=flat-square&logo=pypi&logoColor=white&label=PyPI" alt="PyPI"></a>
-  <a href="https://pypi.org/project/inkscape-mcp/"><img src="https://img.shields.io/pypi/pyversions/inkscape-mcp.svg?style=flat-square&logo=python&logoColor=white&label=Python" alt="Python versions"></a>
+  <a href="https://pypi.org/project/inkscape-mcp/"><img src="https://img.shields.io/badge/Python-3.14-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.14"></a>
   <a href="https://pypi.org/project/inkscape-mcp/"><img src="https://img.shields.io/pypi/dm/inkscape-mcp.svg?style=flat-square&label=downloads" alt="PyPI downloads"></a>
   <a href="https://github.com/aravindev/inkscape_mcp/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/aravindev/inkscape_mcp/ci.yml?branch=main&style=flat-square&logo=github&label=CI" alt="CI"></a>
   <a href="https://github.com/aravindev/inkscape_mcp/blob/main/LICENSE"><img src="https://img.shields.io/github/license/aravindev/inkscape_mcp?style=flat-square&color=yellow" alt="License"></a>
 </p>
 
 <p>
-  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-1.x-1F6FEB?style=flat-square&logo=anthropic&logoColor=white" alt="MCP"></a>
-  <a href="https://github.com/PrefectHQ/fastmcp"><img src="https://img.shields.io/badge/FastMCP-3.2-7c5cfc?style=flat-square" alt="FastMCP"></a>
+  <a href="https://modelcontextprotocol.io"><img src="https://img.shields.io/badge/MCP-2.x-1F6FEB?style=flat-square&logo=anthropic&logoColor=white" alt="MCP"></a>
+  <a href="https://github.com/PrefectHQ/fastmcp"><img src="https://img.shields.io/badge/FastMCP-4.1-7c5cfc?style=flat-square" alt="FastMCP"></a>
   <a href="https://inkscape.org"><img src="https://img.shields.io/badge/Inkscape-1.4.4-000000?style=flat-square&logo=inkscape&logoColor=white" alt="Inkscape"></a>
   <a href="#getting-started"><img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-informational?style=flat-square" alt="Platform: Linux | Windows | macOS"></a>
   <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/badge/style-ruff-D7FF64?style=flat-square&logo=ruff&logoColor=black" alt="Ruff"></a>
