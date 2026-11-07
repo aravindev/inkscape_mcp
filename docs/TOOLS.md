@@ -130,15 +130,15 @@ Dublin-Core RDF metadata in the SVG's `<rdf:RDF>` block.
 
 ## inkscape_live
 
-Drive a running Inkscape window via D-Bus. 20
+Drive a running Inkscape window via D-Bus. 21
 operations. Highlights:
 
 - **Bridge:** `ping`.
 - **Selection:** `get_selection`, `set_selection`, `delete_selected`.
 - **Document:** `get_document_xml`, `open_file`, `save_snapshot`.
-- **Editing:** `apply_action`, `insert_svg`, `edit_xml`, `path_edit`.
+- **Editing:** `apply_action` (app, window and document scope, including `undo`/`redo`), `insert_svg`, `edit_xml`, `path_edit`, `path_offset`.
 - **Inspection:** `inspect_selection`, `inspect_layers`, `inspect_defs`, `inspect_view`, `inspect_pages`, `inspect_element`.
-- **Discovery:** `list_actions` (filtered).
+- **Discovery:** `list_actions` (filtered; split into `app`, `window`, `document`).
 - **Extensions on live doc:** `execute_inkex`.
 - **Vision:** `rasterize` — render the doc / an element / an area to PNG so
   the agent can see the result.
@@ -172,5 +172,6 @@ Registered resources:
   **Read this one first for anything non-trivial** — it carries the procedural-composition
   loop, the collaboration patterns, and the Inkscape rendering pitfalls (silently broken
   `feDropShadow`, filter-bound clamping) that otherwise ruin output with no error.
-- `resource://inkscape/cli-actions` — full `inkscape --action-list` capture.
+- `resource://inkscape/cli-actions` — full `inkscape --action-list` capture (app-scope actions).
+- `resource://inkscape/gui-actions` — window- and document-scope actions only a running GUI exports.
 - `resource://inkscape/cli-help` — full `inkscape --help` capture.

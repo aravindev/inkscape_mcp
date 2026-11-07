@@ -588,7 +588,12 @@ def test_reference_docs_are_importable_package_data():
     doc returned 'not found' from a wheel install."""
     from importlib import resources
 
-    for name in ("mcp-workflow.md", "inkscape-1.4.4-actions.txt", "inkscape-1.4.4-help.txt"):
+    for name in (
+        "mcp-workflow.md",
+        "inkscape-1.4.4-actions.txt",
+        "inkscape-1.4.4-gui-actions.txt",
+        "inkscape-1.4.4-help.txt",
+    ):
         assert (resources.files("inkscape_mcp.reference") / name).read_text(encoding="utf-8")
 
 

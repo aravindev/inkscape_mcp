@@ -7,10 +7,11 @@ This class is a drop-in for ``InkscapeDBus`` — identical method surface
 (``is_available``/``list_actions``/``describe``/``activate``/``open_file``/
 ``list_windows``) — selected by ``tools.live._get_bus()`` on managed platforms.
 
-Object-path note (Inkscape 1.4.x): app actions live at ``/org/inkscape/Inkscape`` and
-window/document-scope actions at ``/org/inkscape/Inkscape/document/N`` — NOT
-``/org/inkscape/Inkscape/window/N`` (which older Inkscape used and the jeepney client
-still hardcodes).
+Object-path note (Inkscape 1.4.x): app actions live at ``/org/inkscape/Inkscape``. This
+client routes both window and document scope to ``/org/inkscape/Inkscape/document/N``.
+On Linux, Inkscape also exports ``/org/inkscape/Inkscape/window/N``, which holds the
+window-only actions (``document-save``, ``paste-in-place``, ``layer-new``) that the
+jeepney client reaches; whether Windows and macOS export it too is unverified.
 """
 
 from __future__ import annotations
@@ -90,9 +91,9 @@ class GDBusInkscapeDBus:
     def _scope_path(self, scope: str, window_id: int) -> str:
         if scope == "app":
             return APP_PATH
-        if scope == "window":
+        if scope in ("window", "document"):
             return f"{DOCUMENT_PATH_PREFIX}/{window_id}"
-        raise ValueError(f"scope must be 'app' or 'window', got {scope!r}")
+        raise ValueError(f"scope must be 'app', 'window' or 'document', got {scope!r}")
 
     # ---- public surface (mirrors InkscapeDBus) --------------------------------------
 
@@ -176,6 +177,10 @@ class GDBusInkscapeDBus:
         for m in re.finditer(r"node\s+(\d+)\s*\{", out):
             ids.append(int(m.group(1)))
         return sorted(set(ids))
+
+    def list_documents(self) -> list[int]:
+        """Same ids as ``list_windows``: this client addresses windows by document."""
+        return self.list_windows()
 
 
 # Backwards-compatible name; the class is no longer Windows-only.

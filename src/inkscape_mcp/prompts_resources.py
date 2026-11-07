@@ -107,7 +107,8 @@ Convenience tools (unique XML logic):
 Prompts: prompt://inkscape/svg-file-workflow, vector-editing-workflow, analysis-workflow
 
 Resources: resource://inkscape/capabilities, resource://inkscape/skills,
-  resource://inkscape/mcp-workflow, resource://inkscape/cli-actions, resource://inkscape/cli-help"""
+  resource://inkscape/mcp-workflow, resource://inkscape/cli-actions, resource://inkscape/gui-actions,
+  resource://inkscape/cli-help"""
 
     @mcp.resource("resource://inkscape/skills")
     def resource_skills() -> str:
@@ -147,10 +148,18 @@ Resources: resource://inkscape/capabilities, resource://inkscape/skills,
 
     @mcp.resource("resource://inkscape/cli-actions")
     def resource_cli_actions() -> str:
-        """Full output of `inkscape --action-list` — every D-Bus-reachable verb with a one-line
-        description. Use this as the catalog when `list_actions(target=...)` filter isn't enough,
-        or when you want to browse the entire surface."""
+        """Full output of `inkscape --action-list` — every app-scope verb with a one-line
+        description, usable headlessly and over D-Bus. Use this as the catalog when
+        `list_actions(target=...)` filter isn't enough. GUI-only window and document
+        actions (undo, document-save, tool-switch, ...) are in `resource://inkscape/gui-actions`."""
         return _read_docs_reference("inkscape-1.4.4-actions.txt", "Inkscape action list")
+
+    @mcp.resource("resource://inkscape/gui-actions")
+    def resource_gui_actions() -> str:
+        """Actions only a running Inkscape exports over D-Bus: window scope (tools, dialogs,
+        canvas, paste, document-save) and document scope (undo, redo, vacuum-defs, page
+        order), with parameter types. `apply_action` finds the scope automatically."""
+        return _read_docs_reference("inkscape-1.4.4-gui-actions.txt", "Inkscape GUI action list")
 
     @mcp.resource("resource://inkscape/cli-help")
     def resource_cli_help() -> str:

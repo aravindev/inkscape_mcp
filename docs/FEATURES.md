@@ -9,8 +9,8 @@ D-Bus. Built on FastMCP 3.2.
 ### Live canvas (Inkscape running)
 
 - Read the current selection, layer structure, defs, view, pages.
-- Apply any of ~1,070 Inkscape actions on the live document — each one a
-  normal undo entry.
+- Apply any of ~1,280 Inkscape actions on the live document (app, window and
+  document scope, including undo/redo) — each one a normal undo entry.
 - Insert SVG fragments through the XML-edit extension.
 - Edit element attributes and path `d` data in place.
 - Rasterize the document or a single element to PNG so the agent can *see*
