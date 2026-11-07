@@ -19,9 +19,15 @@ concurrency:
 
 jobs:
   test:
-    name: Lint + Tests
+    name: Lint + Tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.14 installs without pip inkex and runs extensions against Inkscape's bundled
+        # copy (see pyproject.toml), so it exercises a different dependency set.
+        python: ["3.12", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
@@ -46,7 +52,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           enable-cache: true
 
       - name: Sync project

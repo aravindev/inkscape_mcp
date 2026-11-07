@@ -1,7 +1,8 @@
 # Installation
 
 Tested with Inkscape 1.4.4 on Ubuntu 24.04, Windows 11, and macOS (Apple Silicon).
-Python 3.12+ required.
+Python 3.12+ required. On Python 3.14 the server does not install `inkex` from PyPI
+(its `lxml<6` cap has no 3.14 wheels); extensions use the copy bundled with Inkscape.
 
 ## macOS
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,13 @@ def pytest_configure(config: pytest.Config) -> None:
         )
     # Pin the binary for the in-process server: on macOS it is not on $PATH.
     os.environ.setdefault("INKSCAPE_BIN", binary)
+    # Python 3.14 installs no pip inkex (its lxml<6 cap has no 3.14 wheels). The bridge
+    # plugins normally run inside Inkscape, which puts its bundled inkex on the path;
+    # tests that run them with this interpreter need the same.
+    if importlib.util.find_spec("inkex") is None:
+        bundled = [str(d) for d in platform_support.system_extensions_dirs() if (d / "inkex").is_dir()]
+        sys.path[:0] = bundled
+        os.environ["PYTHONPATH"] = os.pathsep.join([*bundled, os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)
     out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10)
     match = re.search(r"Inkscape\s+(\d+)\.(\d+)", out.stdout)
     if not match or (int(match.group(1)), int(match.group(2))) != (1, 4):

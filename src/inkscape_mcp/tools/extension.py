@@ -18,6 +18,7 @@ Surfaces:
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
 import re
@@ -197,6 +198,11 @@ async def _run_subprocess(argv: list[str], cwd: Path | None) -> tuple[bool, byte
     env = os.environ.copy()
     # inkex extensions import inkex; make sure both the bundled and pip-installed
     # paths are reachable. cwd handles the bundled case (relative imports).
+    if importlib.util.find_spec("inkex") is None:
+        # No pip-installed inkex (Python 3.14): use the copy Inkscape ships with its
+        # extensions, as Inkscape itself does when it runs them.
+        bundled = [str(d) for d in _SYSTEM_EXT_DIRS if (d / "inkex").is_dir()]
+        env["PYTHONPATH"] = os.pathsep.join([*bundled, env.get("PYTHONPATH", "")]).rstrip(os.pathsep)
     proc = await asyncio.create_subprocess_exec(
         *argv,
         stdout=asyncio.subprocess.PIPE,
