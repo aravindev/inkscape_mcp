@@ -6,20 +6,27 @@ Python 3.12+ required. On Python 3.14 the server does not install `inkex` from P
 
 ## macOS
 
-**Use a source checkout with `uv sync`.** The macOS PyGObject exclusion is a
-root-project uv override, not published package metadata. The standalone `uvx`,
-pip, and `uv add` instructions below are not currently supported macOS install
-paths: inkex's dependencies may still trigger native PyGObject/pycairo builds.
+Install Inkscape 1.4.x from inkscape.org as `/Applications/Inkscape.app` (it is found
+there automatically), plus D-Bus and GLib for the live bridge:
 
 ```bash
-# Inkscape from inkscape.org, installed as /Applications/Inkscape.app
-# Live bridge transport (macOS has no session bus of its own):
 brew install dbus glib
+```
 
-# Pin the app-bundle executable (it is not on $PATH):
-export INKSCAPE_BIN=/Applications/Inkscape.app/Contents/MacOS/inkscape
+**Python 3.14+: `uvx` works.** On 3.14 the server installs no pip `inkex`, so nothing
+pulls in PyGObject/pycairo. This needs an inkscape-mcp release newer than 1.3.1.
 
-# From a source checkout:
+```bash
+uvx --python 3.14 inkscape_mcp --help
+claude mcp add inkscape_mcp -s user -- uvx --python 3.14 inkscape_mcp
+```
+
+**Python 3.12/3.13: use a source checkout.** There pip `inkex` depends on PyGObject,
+which has no macOS wheels. The project's `[tool.uv]` override that skips it applies only
+to a checkout, not to `uvx`, pip or `uv add` installs. The checkout's `.python-version`
+selects 3.14 anyway.
+
+```bash
 uv sync
 uv run inkscape_mcp --help
 
@@ -27,15 +34,27 @@ uv run inkscape_mcp --help
 claude mcp add inkscape_mcp -s user -- uv run --directory /absolute/path/to/inkscape_mcp inkscape_mcp
 ```
 
-The MCP starts a private `dbus-daemon` and launches its own Inkscape under it;
-a Finder-launched Inkscape is not reachable from the live bridge. The managed
-instance uses `~/.cache/inkscape_mcp/inkscape-profile`, separate from your normal
-profile and any `INKSCAPE_PROFILE_DIR` override (which headless tools still honor).
-Immediately before launch, only this isolated profile's `python-interpreter` is
-set to the MCP Python for bridge plugins. This works around bundled-Python stalls
-observed on some installations, not a proven defect in every macOS build. Disable
-the workaround with `INKSCAPE_MCP_SET_PYTHON_PREF=0`. Headless initialization and
-diagnostics do not change interpreter preferences; diagnostics never start a bus.
+### How the live bridge runs on macOS
+
+- The MCP starts a private `dbus-daemon` and launches its own Inkscape under it. A
+  Finder-launched Inkscape, or one on a session bus you started yourself (for example
+  from a LaunchAgent), is **not reachable**; only the managed instance is. Use
+  `inkscape_live` `open_file` to work on a document.
+- The managed instance uses `~/.cache/inkscape_mcp/inkscape-profile`, and headless
+  CLI runs use `~/.cache/inkscape_mcp/cli-profile`. Your own extensions, preferences
+  and templates are **not available** in either. Your normal profile is never changed.
+  A headless run honors an `INKSCAPE_PROFILE_DIR` you set; the managed instance does not.
+- Both profiles set `python-interpreter` to the MCP's Python, because Inkscape's
+  bundled Python stalls or is killed on some installations (it is killed at launch on
+  macOS 27 with Inkscape 1.4.4). Disable this with `INKSCAPE_MCP_SET_PYTHON_PREF=0`.
+  Headless initialization and diagnostics do not change interpreter preferences, and
+  diagnostics never start a bus.
+- Extensions that open their own GTK window (those using `inkex.gui`, such as Import
+  Web Image) do not run in the managed instance: the MCP's Python has no PyGObject.
+- macOS Inkscape has no `document-save` over D-Bus. After a live edit the MCP saves by
+  exporting the document over its own file, which works for files it opened (`open_file`
+  or at launch). Inkscape still marks the document as modified, so closing the window
+  asks to save; the file on disk already matches.
 
 System extensions are read from
 `/Applications/Inkscape.app/Contents/Resources/share/inkscape/extensions`;

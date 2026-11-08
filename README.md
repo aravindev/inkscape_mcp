@@ -87,45 +87,25 @@ On Windows the live bridge **launches and manages its own Inkscape instance** â€
 
 ### macOS
 
-Headless tools work with a stock Inkscape.app. **macOS currently requires a source
-checkout and `uv sync`**, rather than the `uvx`/pip installs above. The project's
-`[tool.uv]` overrides skip inkex's PyGObject dependency on macOS; these overrides
-are not published as wheel dependency metadata. A standalone install may therefore
-attempt native PyGObject/pycairo builds.
-
-The live bridge needs a private D-Bus session because a Finder-launched Inkscape
-does not register on the MCP's bus.
+Install Inkscape 1.4.x as `/Applications/Inkscape.app` (found automatically) and the
+live bridge's D-Bus pieces:
 
 ```bash
-# 1. d-bus + gdbus (the live bridge's managed bus)
 brew install dbus glib
 
-# 2. Point the MCP at the app-bundle executable
-export INKSCAPE_BIN=/Applications/Inkscape.app/Contents/MacOS/inkscape
+# Python 3.14+ (inkscape-mcp newer than 1.3.1): uvx works
+claude mcp add inkscape_mcp -s user -- uvx --python 3.14 inkscape_mcp
 
-# 3. From your source checkout, install and run
+# Python 3.12/3.13: use a source checkout (pip inkex pulls in PyGObject, which has no macOS wheels)
 uv sync
-uv run inkscape_mcp --mode stdio
-
-# Register the checkout with Claude Code (replace the absolute path)
 claude mcp add inkscape_mcp -s user -- uv run --directory /absolute/path/to/inkscape_mcp inkscape_mcp
 ```
 
-Notes specific to macOS:
+The MCP starts its own `dbus-daemon` and its own Inkscape, with MCP-owned profiles under
+`~/.cache/inkscape_mcp/`. A Finder-launched Inkscape is not reachable, and your own
+extensions and preferences are not loaded. See [docs/INSTALL.md](docs/INSTALL.md#macos)
+for how the live bridge saves, which extensions do not run, and the Python workaround.
 
-- The MCP starts its own `dbus-daemon` (unix socket under
-  `~/.cache/inkscape_mcp/`) and launches its own Inkscape under it. A normally
-  launched Inkscape window is **not reachable**; use the MCP's `open_file` to
-  work on a document.
-- The managed instance uses a dedicated profile at
-  `~/.cache/inkscape_mcp/inkscape-profile`, including its bridge plugins. It does
-  not use or modify your normal Inkscape profile or `INKSCAPE_PROFILE_DIR` override.
-  Headless tools still honor `INKSCAPE_PROFILE_DIR`.
-- The bundled Python has stalled in `dyld_start` on some installations; this is
-  not established as a general macOS defect. Just before a managed launch, the MCP
-  sets **only its isolated profile's** `python-interpreter` to the current server
-  Python. Set `INKSCAPE_MCP_SET_PYTHON_PREF=0` to disable that workaround.
-  Headless server startup never changes the interpreter preference.
 - If macOS gates the app after download, allow it once in System Settings â†’
   Privacy & Security (or `xattr -dr com.apple.quarantine /Applications/Inkscape.app`
   when the app is not managed by App Management).
