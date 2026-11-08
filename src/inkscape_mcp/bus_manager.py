@@ -416,7 +416,9 @@ def ensure_inkscape(
     """Ensure Inkscape is running on ``address``; launch it under the bus if not.
 
     Returns True if Inkscape is registered (already-running or freshly launched and
-    registered within the timeout). Launch is detached so closing the MCP server does
+    registered within the timeout). Raises ``BusError`` naming the PID when the instance
+    the MCP launched is alive but never registers, since launching another would only
+    pile up instances. Launch is detached so closing the MCP server does
     not kill the user's editor. When ``open_path`` is omitted, a default blank canvas is
     opened so a live document window exists.
     """
@@ -434,11 +436,13 @@ def ensure_inkscape(
     if existing is not None and _pid_alive(existing, inkscape_executable):
         if _wait_registered(gdbus_path, address, _INKSCAPE_REGISTER_TIMEOUT_S):
             return True
-        log.warning(
-            "Inkscape (pid %s) is running but did not register on the session bus; not launching another instance",
-            existing,
+        quit_hint = f"`kill {existing}`" if is_macos() else f"`taskkill /PID {existing} /F`"
+        raise BusError(
+            f"The MCP-launched Inkscape (pid {existing}) is running but did not register on the "
+            f"session bus within {_INKSCAPE_REGISTER_TIMEOUT_S:.0f}s; it may be showing a dialog. "
+            f"Check its window, or quit it ({quit_hint}) and retry: the next live call starts a "
+            "fresh one."
         )
-        return False
 
     # Inkscape passes its environment to the extension processes it starts.
     env = platform_support.subprocess_env()
