@@ -78,3 +78,41 @@ jobs:
           uv run pytest tests/ -m "not network" -q --tb=short
           --ignore=tests/test_inkscape_live.py
           --ignore=tests/live
+
+  # The headless suite on macOS: Inkscape.app bundle discovery, the MCP-owned profiles
+  # and the Python 3.14 bundled-inkex path differ from Linux. The live tier needs a GUI
+  # session and stays local, as on Linux.
+  macos:
+    name: Tests (macOS, Python 3.14)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # The cask tracks the current Inkscape release; tests/conftest.py stops the run
+      # if it is not 1.4.x.
+      - name: Install Inkscape
+        run: |
+          brew install --cask inkscape
+          /Applications/Inkscape.app/Contents/MacOS/inkscape --version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Sync project
+        run: uv sync --all-extras --dev
+
+      - name: Pytest
+        run: >
+          uv run pytest tests/ -m "not network" -q --tb=short
+          --ignore=tests/test_inkscape_live.py
+          --ignore=tests/live
+
+      # Running extensions must never write into the app bundle (it breaks the seal).
+      - name: Inkscape.app is unmodified
+        run: |
+          test -z "$(find /Applications/Inkscape.app -name __pycache__)"
+          codesign --verify --deep --strict /Applications/Inkscape.app
