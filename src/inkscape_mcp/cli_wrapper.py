@@ -6,10 +6,11 @@ This module provides core Inkscape command-line functionality for MCP operations
 
 import asyncio
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any
+
+from . import platform_support
 
 logger = logging.getLogger(__name__)
 
@@ -397,7 +398,7 @@ class InkscapeCliWrapper:
         """
         Get environment variables for subprocess execution.
         """
-        env = os.environ.copy()
+        env = platform_support.subprocess_env()
 
         # Ensure UTF-8 encoding
         env["LANG"] = "C.UTF-8"

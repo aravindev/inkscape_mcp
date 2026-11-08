@@ -440,7 +440,8 @@ def ensure_inkscape(
         )
         return False
 
-    env = dict(os.environ)
+    # Inkscape passes its environment to the extension processes it starts.
+    env = platform_support.subprocess_env()
     if is_macos():
         # Only configure a stopped managed instance, never the user's normal profile.
         platform_support.set_inkscape_python_preference()
