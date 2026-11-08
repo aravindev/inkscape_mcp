@@ -6,41 +6,27 @@ Python 3.12+ required. On Python 3.14 the server does not install `inkex` from P
 
 ## macOS
 
-**Use a source checkout with `uv sync`.** The macOS PyGObject exclusion is a
-root-project uv override, not published package metadata. The standalone `uvx`,
-pip, and `uv add` instructions below are not currently supported macOS install
-paths: inkex's dependencies may still trigger native PyGObject/pycairo builds.
+1. Install Inkscape 1.4.x from [inkscape.org](https://inkscape.org/release/) into `/Applications`.
+2. Install the live bridge's D-Bus tools and uv:
 
-```bash
-# Inkscape from inkscape.org, installed as /Applications/Inkscape.app
-# Live bridge transport (macOS has no session bus of its own):
-brew install dbus glib
+   ```bash
+   brew install dbus glib uv
+   ```
 
-# Pin the app-bundle executable (it is not on $PATH):
-export INKSCAPE_BIN=/Applications/Inkscape.app/Contents/MacOS/inkscape
+3. Install from a source checkout and register it:
 
-# From a source checkout:
-uv sync
-uv run inkscape_mcp --help
+   ```bash
+   git clone https://github.com/aravindev/inkscape_mcp.git
+   cd inkscape_mcp
+   uv sync
+   claude mcp add inkscape_mcp -s user -- uv run --directory "$PWD" inkscape_mcp
+   ```
 
-# Use your absolute checkout path when registering the server:
-claude mcp add inkscape_mcp -s user -- uv run --directory /absolute/path/to/inkscape_mcp inkscape_mcp
-```
+   With a release newer than 1.3.1, `uvx` also works on Python 3.14+:
+   `claude mcp add inkscape_mcp -s user -- uvx --python 3.14 inkscape_mcp`.
 
-The MCP starts a private `dbus-daemon` and launches its own Inkscape under it;
-a Finder-launched Inkscape is not reachable from the live bridge. The managed
-instance uses `~/.cache/inkscape_mcp/inkscape-profile`, separate from your normal
-profile and any `INKSCAPE_PROFILE_DIR` override (which headless tools still honor).
-Immediately before launch, only this isolated profile's `python-interpreter` is
-set to the MCP Python for bridge plugins. This works around bundled-Python stalls
-observed on some installations, not a proven defect in every macOS build. Disable
-the workaround with `INKSCAPE_MCP_SET_PYTHON_PREF=0`. Headless initialization and
-diagnostics do not change interpreter preferences; diagnostics never start a bus.
-
-System extensions are read from
-`/Applications/Inkscape.app/Contents/Resources/share/inkscape/extensions`;
-bridge plugins are installed to
-`~/.cache/inkscape_mcp/inkscape-profile/extensions/inkscape_mcp`.
+The live bridge launches and manages its own Inkscape; an Inkscape you open yourself
+is not reachable. Use `inkscape_live` `open_file` to work on a document.
 
 ## Prerequisites
 
