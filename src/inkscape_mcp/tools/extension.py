@@ -195,7 +195,7 @@ def _build_command(ext: _Extension, params: dict[str, Any], input_path: Path) ->
 
 async def _run_subprocess(argv: list[str], cwd: Path | None) -> tuple[bool, bytes, str]:
     """Run an extension subprocess. Returns (success, stdout_bytes, stderr_text)."""
-    env = os.environ.copy()
+    env = platform_support.subprocess_env()
     # inkex extensions import inkex; make sure both the bundled and pip-installed
     # paths are reachable. cwd handles the bundled case (relative imports).
     if importlib.util.find_spec("inkex") is None:

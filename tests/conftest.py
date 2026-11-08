@@ -35,6 +35,12 @@ def pytest_configure(config: pytest.Config) -> None:
     # tests that run them with this interpreter need the same.
     if importlib.util.find_spec("inkex") is None:
         bundled = [str(d) for d in platform_support.system_extensions_dirs() if (d / "inkex").is_dir()]
+        # Importing the bundled inkex here must not write __pycache__ into the Inkscape
+        # install (on macOS that breaks Inkscape.app's code-signature seal).
+        # Cover this process and the extension subprocesses tests start with os.environ.
+        os.environ.update(platform_support.subprocess_env())
+        if sys.pycache_prefix is None and not sys.dont_write_bytecode:
+            sys.pycache_prefix = os.environ.get("PYTHONPYCACHEPREFIX")
         sys.path[:0] = bundled
         os.environ["PYTHONPATH"] = os.pathsep.join([*bundled, os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)
     out = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=10)

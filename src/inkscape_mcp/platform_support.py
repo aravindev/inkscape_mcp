@@ -123,6 +123,27 @@ def profile_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")) / "inkscape"
 
 
+def pycache_dir() -> Path:
+    """Where Python writes bytecode for extension code the MCP runs."""
+    return Path.home() / ".cache" / "inkscape_mcp" / "pycache"
+
+
+def subprocess_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for any process that may run Inkscape's Python extensions.
+
+    Extensions and the bundled ``inkex`` live inside the Inkscape install. When an
+    interpreter other than Inkscape's own imports them (the MCP's Python, or the managed
+    instance's ``python-interpreter`` preference), it writes ``__pycache__`` next to the
+    sources. On macOS that adds files to ``Inkscape.app`` and breaks its code-signature
+    seal. ``PYTHONPYCACHEPREFIX`` sends the bytecode to the MCP's cache instead, and keeps
+    it cached. A caller-set ``PYTHONPYCACHEPREFIX`` or ``PYTHONDONTWRITEBYTECODE`` wins.
+    """
+    env = dict(os.environ if base is None else base)
+    if not env.get("PYTHONPYCACHEPREFIX") and not env.get("PYTHONDONTWRITEBYTECODE"):
+        env["PYTHONPYCACHEPREFIX"] = str(pycache_dir())
+    return env
+
+
 def live_profile_dir() -> Path:
     """Keep the managed macOS instance separate from the user's normal profile."""
     if is_macos():

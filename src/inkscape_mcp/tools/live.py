@@ -13,7 +13,7 @@ from typing import Any
 from lxml import etree
 from pydantic import BaseModel
 
-from .. import bus_manager
+from .. import bus_manager, platform_support
 from ..clipboard import SVG_NS
 from ..dbus_client import InkscapeDBus
 from ..extension_bridge import invoke_extension
@@ -182,8 +182,6 @@ def _resolve_inkscape_exe(config: Any) -> str:
     exe = getattr(config, "inkscape_executable", None) if config is not None else None
     exe = exe or os.environ.get("INKS_INKSCAPE_BIN") or os.environ.get("INKSCAPE_BIN")
     if not exe:
-        from .. import platform_support
-
         exe = platform_support.resolve_inkscape_binary() or "inkscape"
     # Inkscape's detector may return inkscape.COM (console wrapper); the GUI binary
     # inkscape.exe sits beside it and launches without spawning a console window.
@@ -684,7 +682,7 @@ def _load_action_descriptions(cli_executable: str = "inkscape") -> dict[str, str
     result: dict[str, str] = {}
     # Inkscape aborts its UTF-8 conversion (and prints only the first action) when
     # LANG is empty, which is common in IDE terminals — force a UTF-8 locale.
-    env = os.environ.copy()
+    env = platform_support.subprocess_env()
     env["LANG"] = "C.UTF-8"
     env["LC_ALL"] = "C.UTF-8"
     try:
@@ -1069,6 +1067,7 @@ async def _op_rasterize(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=platform_support.subprocess_env(),
         )
         _, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=60)
     except TimeoutError:
