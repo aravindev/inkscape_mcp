@@ -8,7 +8,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from lxml import etree
 from pydantic import BaseModel
@@ -17,6 +17,7 @@ from .. import bus_manager, platform_support
 from ..clipboard import SVG_NS
 from ..dbus_client import InkscapeDBus
 from ..extension_bridge import invoke_extension
+from ..mcp_tool_types import InkscapeLiveOperation
 from ..win_dbus_client import GDBusInkscapeDBus
 
 
@@ -38,6 +39,7 @@ _EXPORT_POLL_INTERVAL_S = 0.05
 
 _AUTO_SAVE_ENV = "INKSCAPE_MCP_AUTO_SAVE"
 _AUTO_CLEANUP_ENV = "INKSCAPE_MCP_AUTO_CLEANUP"
+_LIVE_OPERATIONS = frozenset(get_args(InkscapeLiveOperation))
 
 # Scratch snapshots/rasters are debugging aids the agent may still be holding a path to,
 # so keep the recent ones; anything older than this is dead weight.
@@ -1325,6 +1327,16 @@ async def inkscape_live(
 ) -> dict[str, Any]:
     """Drive a running Inkscape GUI via D-Bus."""
     start = time.perf_counter()
+    # Reject unknown names before touching the bridge: otherwise a typo can auto-launch
+    # Inkscape, or come back as "ambiguous window" when several documents are open.
+    if operation not in _LIVE_OPERATIONS:
+        return _result(
+            operation,
+            False,
+            f"unknown operation {operation!r}",
+            error="unknown operation",
+            start=start,
+        )
     try:
         bus = _get_bus(config)
     except Exception as exc:
