@@ -9,7 +9,7 @@ import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from lxml import etree
 from pydantic import BaseModel
@@ -18,6 +18,7 @@ from .. import bus_manager, platform_support
 from ..clipboard import SVG_NS
 from ..dbus_client import InkscapeDBus
 from ..extension_bridge import invoke_extension
+from ..mcp_tool_types import InkscapeLiveOperation
 from ..win_dbus_client import GDBusInkscapeDBus
 
 
@@ -39,6 +40,7 @@ _EXPORT_POLL_INTERVAL_S = 0.05
 
 _AUTO_SAVE_ENV = "INKSCAPE_MCP_AUTO_SAVE"
 _AUTO_CLEANUP_ENV = "INKSCAPE_MCP_AUTO_CLEANUP"
+_LIVE_OPERATIONS = frozenset(get_args(InkscapeLiveOperation))
 _SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
 
 # Scratch snapshots/rasters are debugging aids the agent may still be holding a path to,
@@ -273,8 +275,10 @@ def _get_bus(config: Any = None) -> Any:
     return _BUS
 
 
-def _auto_launch_inkscape(config: Any) -> bool:
-    """Managed-platform auto-launch: ensure a bus + a running Inkscape under it."""
+def _auto_launch_inkscape(config: Any, open_path: str | None = None) -> bool:
+    """Managed-platform auto-launch: ensure a bus + a running Inkscape under it.
+
+    ``open_path`` is the document a fresh launch opens instead of the default canvas."""
     inkscape_exe = _resolve_inkscape_exe(config)
     gdbus = bus_manager.find_gdbus(inkscape_exe)
     if not gdbus:
@@ -284,7 +288,7 @@ def _auto_launch_inkscape(config: Any) -> bool:
             else "gdbus.exe not found (expected next to inkscape.exe or on PATH)"
         )
     address = bus_manager.ensure_bus(gdbus)
-    return bus_manager.ensure_inkscape(gdbus, address, inkscape_exe)
+    return bus_manager.ensure_inkscape(gdbus, address, inkscape_exe, open_path=open_path)
 
 
 def _result(
@@ -1381,6 +1385,16 @@ async def inkscape_live(
 ) -> dict[str, Any]:
     """Drive a running Inkscape GUI via D-Bus."""
     start = time.perf_counter()
+    # Reject unknown names before touching the bridge: otherwise a typo can auto-launch
+    # Inkscape, or come back as "ambiguous window" when several documents are open.
+    if operation not in _LIVE_OPERATIONS:
+        return _result(
+            operation,
+            False,
+            f"unknown operation {operation!r}",
+            error="unknown operation",
+            start=start,
+        )
     try:
         bus = _get_bus(config)
     except Exception as exc:
@@ -1401,9 +1415,16 @@ async def inkscape_live(
             return _result(operation, False, f"ping failed: {exc}", error=str(exc), start=start)
 
     # Auto-manage (Windows/macOS): if the bridge isn't live yet, start the bus + Inkscape.
+    # open_file into a cold Inkscape launches it with that file, so the session holds one
+    # document rather than the default canvas plus the file (which blocks auto-save).
+    launched_with = ""
     if bus_manager.manages_bus() and not bus.is_available():
+        cold_open = operation == "open_file" and os.path.isabs(target) and os.path.isfile(target)
+        pid_before = bus_manager.launched_pid()
         try:
-            _auto_launch_inkscape(config)
+            _auto_launch_inkscape(config, open_path=target if cold_open else None)
+            if cold_open and bus_manager.launched_pid() != pid_before:
+                launched_with = target
         except Exception as exc:
             return _result(
                 operation,
@@ -1483,6 +1504,14 @@ async def inkscape_live(
                 bus, operation, window_id, target, start, cli_executable=_resolve_inkscape_exe(config)
             )
         if operation == "open_file":
+            if launched_with:
+                return _result(
+                    operation,
+                    True,
+                    f"launched Inkscape with {target!r}",
+                    data={"path": target, "launched": True},
+                    start=start,
+                )
             return _op_open_file(bus, operation, target, start)
         if operation == "save_snapshot":
             return await _op_save_snapshot(bus, operation, start)
