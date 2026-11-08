@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -40,6 +41,7 @@ _EXPORT_POLL_INTERVAL_S = 0.05
 _AUTO_SAVE_ENV = "INKSCAPE_MCP_AUTO_SAVE"
 _AUTO_CLEANUP_ENV = "INKSCAPE_MCP_AUTO_CLEANUP"
 _LIVE_OPERATIONS = frozenset(get_args(InkscapeLiveOperation))
+_SODIPODI_NS = "http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
 
 # Scratch snapshots/rasters are debugging aids the agent may still be holding a path to,
 # so keep the recent ones; anything older than this is dead weight.
@@ -97,7 +99,7 @@ def _action_mutates_document(action: str) -> bool:
     return not any(action.startswith(p) for p in _READ_ONLY_PREFIXES)
 
 
-def _save_active_document(bus: InkscapeDBus, window_id: int) -> tuple[bool, str]:
+async def _save_active_document(bus: InkscapeDBus, window_id: int) -> tuple[bool, str]:
     """Persist the edited document, or explain why we declined to.
 
     There is a scope mismatch at the heart of this. Every MCP edit lands in the ACTIVE
@@ -106,6 +108,10 @@ def _save_active_document(bus: InkscapeDBus, window_id: int) -> tuple[bool, str]
     two are necessarily the same document. With several, firing save at a window we
     merely guessed would save some *other* document and leave the edited one dirty on
     disk, so we skip it and say so rather than persisting the wrong file.
+
+    Where Inkscape exports no window objects (macOS), `document-save` is unreachable at
+    any scope, so the active document is exported over its own file instead
+    (`_save_by_export`).
 
     Returns (saved, reason-when-not-saved).
     """
@@ -122,13 +128,61 @@ def _save_active_document(bus: InkscapeDBus, window_id: int) -> tuple[bool, str]
             "to disk. Save in the GUI, or work with a single document open."
         )
     try:
+        window_actions: list[str] | None = list(bus.list_actions("window", window_id))
+    except Exception:
+        window_actions = None  # Unknown: try document-save as before.
+    if window_actions is not None and "document-save" not in window_actions:
+        return await _save_by_export(bus)
+    try:
         bus.activate("document-save", scope="window", window_id=window_id)
         return True, ""
     except Exception as exc:
         return False, f"document-save failed: {exc}"
 
 
-def _activate_with_optional_save(
+async def _save_by_export(bus: InkscapeDBus) -> tuple[bool, str]:
+    """Save without `document-save`: export the active document over its own file.
+
+    Inkscape reports only the file name (`sodipodi:docname`), so the path comes from the
+    files the MCP itself opened (`bus_manager.record_opened_path`). Without exactly one
+    match we refuse rather than guess. The export does not clear Inkscape's modified
+    flag, so closing the window still asks to save.
+    """
+    scratch = _scratch_path()
+    try:
+        await _export_document_async(bus, scratch)
+        root = etree.parse(str(scratch), etree.XMLParser(resolve_entities=False, no_network=True)).getroot()
+    except Exception as exc:
+        return False, f"export for save failed: {exc}"
+    docname = root.get(f"{{{_SODIPODI_NS}}}docname", "")
+    if not docname:
+        return False, (
+            "the active document has no file name (never saved?), so there is no file to write. Save it in the GUI."
+        )
+    candidates = bus_manager.opened_paths_named(docname)
+    if not candidates:
+        return False, (
+            f"{docname!r} was not opened through the MCP, so its path on disk is unknown and it was "
+            "NOT written. Open it with inkscape_live open_file, or save in the GUI."
+        )
+    if len(candidates) > 1:
+        return False, (
+            f"several opened files are named {docname!r} ({', '.join(candidates)}), so the edited one "
+            "cannot be identified and nothing was written. Save in the GUI."
+        )
+    target = Path(candidates[0])
+    try:
+        before = target.stat().st_mtime_ns
+        shutil.copyfile(scratch, target)
+        after = target.stat().st_mtime_ns
+    except OSError as exc:
+        return False, f"writing {target} failed: {exc}"
+    if after == before:
+        return False, f"{target} was not modified by the export write"
+    return True, ""
+
+
+async def _activate_with_optional_save(
     bus: InkscapeDBus,
     action: str,
     args: list[Any] | None = None,
@@ -136,8 +190,8 @@ def _activate_with_optional_save(
     window_id: int = 1,
     scope_id: int | None = None,
 ) -> bool:
-    """Fire `action`, then fire document-save if `action` mutates the document.
-    Returns True if save was fired. Save failure is swallowed — the primary edit
+    """Fire `action`, then save the document if `action` mutates it.
+    Returns True if the document was saved. Save failure is swallowed — the primary edit
     succeeded, and a stale on-disk file shouldn't block the agent.
 
     `scope_id` addresses the action's object when it differs from the window (document
@@ -145,7 +199,7 @@ def _activate_with_optional_save(
     bus.activate(action, args, scope=scope, window_id=window_id if scope_id is None else scope_id)
     if not _action_mutates_document(action):
         return False
-    saved, _ = _save_active_document(bus, window_id)
+    saved, _ = await _save_active_document(bus, window_id)
     return saved
 
 
@@ -601,11 +655,11 @@ async def _op_insert_svg(
     return result
 
 
-def _op_delete_selected(bus: InkscapeDBus, operation: str, window_id: int, start: float) -> dict[str, Any]:
+async def _op_delete_selected(bus: InkscapeDBus, operation: str, window_id: int, start: float) -> dict[str, Any]:
     # delete-selection is the explicit object-delete; `delete` is context-sensitive (text/nodes).
     # window_id must be threaded through: the follow-up document-save is window-scoped, so
     # defaulting it to 1 silently no-ops the save on any other window.
-    saved = _activate_with_optional_save(bus, "delete-selection", scope="app", window_id=window_id)
+    saved = await _activate_with_optional_save(bus, "delete-selection", scope="app", window_id=window_id)
     return _result(
         operation,
         True,
@@ -615,7 +669,7 @@ def _op_delete_selected(bus: InkscapeDBus, operation: str, window_id: int, start
     )
 
 
-def _op_apply_action(
+async def _op_apply_action(
     bus: InkscapeDBus,
     operation: str,
     target: str,
@@ -656,7 +710,7 @@ def _op_apply_action(
             )
         scope = "document"
     args = [payload] if payload != "" else None
-    saved = _activate_with_optional_save(bus, target, args, scope=scope, window_id=window_id, scope_id=scope_id)
+    saved = await _activate_with_optional_save(bus, target, args, scope=scope, window_id=window_id, scope_id=scope_id)
     return _result(
         operation,
         True,
@@ -791,6 +845,8 @@ def _op_open_file(bus: InkscapeDBus, operation: str, target: str, start: float) 
             start=start,
         )
     bus.open_file(target)
+    if bus_manager.manages_bus():
+        bus_manager.record_opened_path(target)
     return _result(operation, True, f"requested open of {target!r}", data={"path": target}, start=start)
 
 
@@ -1198,7 +1254,7 @@ async def _op_edit_xml(
 
     # Persist the in-memory mutation to disk so re-reads see current state.
     # Honours the same kill switch as Pattern A: INKSCAPE_MCP_AUTO_SAVE=0 to skip.
-    saved, save_note = _save_active_document(bus, window_id)
+    saved, save_note = await _save_active_document(bus, window_id)
 
     affected = result.data.get("affected", 0)
     return _result(
@@ -1287,7 +1343,7 @@ async def _op_path_edit(
             start=start,
         )
 
-    saved, save_note = _save_active_document(bus, window_id)
+    saved, save_note = await _save_active_document(bus, window_id)
 
     summary = result.data.get("summary", f"path_edit {sub_op!r} applied")
     return _result(
@@ -1440,9 +1496,9 @@ async def inkscape_live(
             # went through mcp_execute, whose mutations are not reliably persisted.
             return await _op_insert_svg(bus, operation, payload, window_id, start)
         if operation == "delete_selected":
-            return _op_delete_selected(bus, operation, window_id, start)
+            return await _op_delete_selected(bus, operation, window_id, start)
         if operation == "apply_action":
-            return _op_apply_action(bus, operation, target, payload, window_id, start)
+            return await _op_apply_action(bus, operation, target, payload, window_id, start)
         if operation == "list_actions":
             return await _op_list_actions(
                 bus, operation, window_id, target, start, cli_executable=_resolve_inkscape_exe(config)

@@ -174,6 +174,7 @@ async def test_auto_save_fires_document_save(monkeypatch):
     mock = AsyncMock(return_value=_ok())
     monkeypatch.setattr(live, "invoke_extension", mock)
     bus = MagicMock()
+    bus.list_actions.return_value = ["document-save"]
     res = await live._op_path_edit(
         bus,
         "path_edit",

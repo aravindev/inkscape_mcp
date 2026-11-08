@@ -42,9 +42,9 @@ def test_resolve_document_id_refuses_none_or_several(documents):
         live._resolve_document_id(_bus([], [], [], documents=documents))
 
 
-def test_apply_action_falls_through_to_document_scope():
+async def test_apply_action_falls_through_to_document_scope():
     bus = _bus(["select-all"], ["document-save"], ["undo", "select-all"])
-    res = live._op_apply_action(bus, "apply_action", "undo", "", 1, time.perf_counter())
+    res = await live._op_apply_action(bus, "apply_action", "undo", "", 1, time.perf_counter())
     assert res["success"] is True
     assert res["data"]["scope"] == "document"
     # The action goes to the document object; the follow-up save to the window.
@@ -53,16 +53,16 @@ def test_apply_action_falls_through_to_document_scope():
     assert bus.activate.call_args_list[1].kwargs == {"scope": "window", "window_id": 1}
 
 
-def test_apply_action_prefers_app_and_window_scope():
+async def test_apply_action_prefers_app_and_window_scope():
     bus = _bus(["select-all"], ["layer-new"], ["select-all", "layer-new"])
-    res = live._op_apply_action(bus, "apply_action", "layer-new", "", 1, time.perf_counter())
+    res = await live._op_apply_action(bus, "apply_action", "layer-new", "", 1, time.perf_counter())
     assert res["data"]["scope"] == "window"
     bus.list_documents.assert_not_called()
 
 
-def test_apply_action_unknown_reports_why_document_scope_was_skipped():
+async def test_apply_action_unknown_reports_why_document_scope_was_skipped():
     bus = _bus([], [], ["undo"], documents=[1, 2])
-    res = live._op_apply_action(bus, "apply_action", "undo", "", 1, time.perf_counter())
+    res = await live._op_apply_action(bus, "apply_action", "undo", "", 1, time.perf_counter())
     assert res["success"] is False
     assert res["error"] == "unknown action"
     assert "2 are open" in res["message"]
