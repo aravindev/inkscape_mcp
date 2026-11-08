@@ -179,7 +179,7 @@ Deeper material is pull-based — `resource://inkscape/mcp-workflow` (operationa
 
 ## Star history
 
-[![Star History Chart](https://raw.githubusercontent.com/aravindev/inkscape_mcp/main/assets/star-history.png)](https://star-history.com/#aravindev/inkscape_mcp&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=aravindev/inkscape_mcp&type=Date)](https://star-history.com/#aravindev/inkscape_mcp&Date)
 
 ## Support
 
