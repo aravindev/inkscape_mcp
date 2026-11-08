@@ -23,6 +23,7 @@ Discovery / overrides (env):
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
 import ntpath
 import os
@@ -41,6 +42,8 @@ ADDRESS_FILE = STATE_DIR / "bus_address"
 PID_FILE = STATE_DIR / "inkscape.pid"
 MACOS_BUS_DIR = STATE_DIR / "bus"
 MACOS_BUS_CONFIG = STATE_DIR / "dbus-session.conf"
+OPENED_PATHS_FILE = STATE_DIR / "opened_paths.json"
+_OPENED_PATHS_KEEP = 200
 
 # Where MSYS2 puts dbus-daemon; used if not overridden and not on PATH.
 _DEFAULT_DBUS_DAEMONS = (
@@ -391,6 +394,39 @@ def _cap_open_files() -> None:
         resource.setrlimit(resource.RLIMIT_NOFILE, (_MAX_OPEN_FILES, hard))
 
 
+def record_opened_path(path: str) -> None:
+    """Remember an absolute path the MCP asked Inkscape to open.
+
+    Inkscape reports only a document's file name (``sodipodi:docname``), and where
+    ``document-save`` is unreachable (macOS exports no ``/window/N``) the live save
+    writes the export back to the file itself. These records are how that save finds the
+    file. They are kept on disk because the managed Inkscape outlives MCP restarts.
+    """
+    resolved = str(Path(path).expanduser().resolve())
+    paths = [p for p in _load_opened_paths() if p != resolved]
+    paths.append(resolved)
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        OPENED_PATHS_FILE.write_text(json.dumps(paths[-_OPENED_PATHS_KEEP:]), encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not record opened path %s: %s", resolved, exc)
+
+
+def opened_paths_named(docname: str) -> list[str]:
+    """Recorded paths that still exist and whose file name is ``docname``."""
+    if not docname:
+        return []
+    return [p for p in _load_opened_paths() if Path(p).name == docname and Path(p).is_file()]
+
+
+def _load_opened_paths() -> list[str]:
+    try:
+        data = json.loads(OPENED_PATHS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [p for p in data if isinstance(p, str)] if isinstance(data, list) else []
+
+
 def _launched_pid() -> int | None:
     try:
         return int(PID_FILE.read_text(encoding="utf-8").strip())
@@ -450,7 +486,9 @@ def ensure_inkscape(
     # An empty LANG (common in IDE terminals) makes GTK abort on UTF-8 conversion.
     if not env.get("LANG"):
         env["LANG"] = "C.UTF-8"
-    argv = [inkscape_executable, open_path or default_canvas()]
+    document = open_path or default_canvas()
+    record_opened_path(document)
+    argv = [inkscape_executable, document]
 
     log.info("Launching Inkscape under MCP session bus: %s", argv)
     popen_kwargs: dict = (
