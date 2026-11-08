@@ -32,7 +32,7 @@ dependencies = [
     "mcp>=2.3.0",
     "prefab-ui>=0.20.1",
     "pydantic>=2.13.4,<3.0.0",
-    "pillow>=12.2.0,<13.0.0",
+    "pillow>=13.0.0,<14.0.0",
     "pyyaml>=6.0.0,<7.0.0",
     "loguru>=0.7.0",
     # inkex 1.4.1 (latest on PyPI) caps lxml<6, and lxml 5.x has no Python 3.14 wheels.
