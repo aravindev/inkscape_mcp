@@ -391,6 +391,11 @@ def _cap_open_files() -> None:
         resource.setrlimit(resource.RLIMIT_NOFILE, (_MAX_OPEN_FILES, hard))
 
 
+def launched_pid() -> int | None:
+    """PID of the Inkscape the MCP last launched, if recorded."""
+    return _launched_pid()
+
+
 def _launched_pid() -> int | None:
     try:
         return int(PID_FILE.read_text(encoding="utf-8").strip())
