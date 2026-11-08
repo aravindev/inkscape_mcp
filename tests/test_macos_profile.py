@@ -99,3 +99,41 @@ def test_non_macos_live_profile_preserves_override(monkeypatch, tmp_path):
     monkeypatch.setattr(platform_support, "is_macos", lambda: False)
     monkeypatch.setenv("INKSCAPE_PROFILE_DIR", str(tmp_path))
     assert platform_support.live_profile_dir() == tmp_path
+
+
+def _cli_env():
+    from inkscape_mcp.cli_wrapper import InkscapeCliWrapper
+
+    wrapper = InkscapeCliWrapper.__new__(InkscapeCliWrapper)
+    return wrapper._get_environment()
+
+
+def test_headless_cli_uses_its_own_profile_with_mcp_python(macos_home):
+    env = _cli_env()
+
+    profile = platform_support.cli_profile_dir()
+    assert env["INKSCAPE_PROFILE_DIR"] == str(profile)
+    assert profile not in (platform_support.live_profile_dir(), platform_support.profile_dir())
+    root = ET.parse(profile / "preferences.xml").getroot()
+    assert root.find("group").get("python-interpreter") == platform_support.sys.executable
+    # The managed GUI's profile is not touched by a headless run.
+    assert not (platform_support.live_profile_dir() / "preferences.xml").exists()
+
+
+def test_headless_cli_keeps_a_user_set_profile(macos_home, monkeypatch):
+    mine = macos_home / "my-profile"
+    monkeypatch.setenv("INKSCAPE_PROFILE_DIR", str(mine))
+
+    env = _cli_env()
+
+    assert env["INKSCAPE_PROFILE_DIR"] == str(mine)
+    assert not mine.exists()
+    assert not platform_support.cli_profile_dir().exists()
+
+
+def test_headless_cli_profile_is_macos_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(platform_support, "is_macos", lambda: False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("INKSCAPE_PROFILE_DIR", raising=False)
+
+    assert "INKSCAPE_PROFILE_DIR" not in _cli_env()

@@ -231,12 +231,24 @@ def extension_interpreter(declared: str | None) -> str:
     return declared
 
 
-def _preferences_path() -> Path:
-    return live_profile_dir() / "preferences.xml"
+def cli_profile_dir() -> Path:
+    """MCP-owned profile for headless CLI runs on macOS.
+
+    Separate from the managed GUI's profile so a CLI run never waits on the running GUI's
+    profile, and from the user's, whose interpreter preference the MCP never changes.
+    """
+    return Path.home() / ".cache" / "inkscape_mcp" / "cli-profile"
 
 
-def set_inkscape_python_preference(interpreter: str | None = None) -> dict[str, Any]:
-    """Configure extension Python only in the MCP-owned macOS live profile.
+def _preferences_path(profile: Path | None = None) -> Path:
+    return (profile or live_profile_dir()) / "preferences.xml"
+
+
+def set_inkscape_python_preference(interpreter: str | None = None, profile: Path | None = None) -> dict[str, Any]:
+    """Configure extension Python only in an MCP-owned macOS profile.
+
+    ``profile`` defaults to the managed live instance's; the headless CLI passes
+    ``cli_profile_dir()``.
 
     Some macOS installations have stalled in the bundled Python's ``dyld_start``.
     This workaround is deliberately scoped to the managed instance, and is applied
@@ -250,7 +262,7 @@ def set_inkscape_python_preference(interpreter: str | None = None) -> dict[str, 
         return {"changed": False, "reason": "disabled via INKSCAPE_MCP_SET_PYTHON_PREF=0"}
 
     target = interpreter or sys.executable
-    prefs = _preferences_path()
+    prefs = _preferences_path(profile)
 
     try:
         if prefs.exists():

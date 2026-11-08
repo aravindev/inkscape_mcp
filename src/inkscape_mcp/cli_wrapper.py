@@ -404,4 +404,13 @@ class InkscapeCliWrapper:
         env["LANG"] = "C.UTF-8"
         env["LC_ALL"] = "C.UTF-8"
 
+        # macOS: exports that Inkscape runs through a Python extension (HPGL, for
+        # example) use the profile's python-interpreter. Inkscape's bundled Python cannot
+        # be relied on there, so headless runs get an MCP-owned profile that points at the
+        # MCP's Python. A user-set INKSCAPE_PROFILE_DIR wins.
+        if platform_support.is_macos() and not env.get("INKSCAPE_PROFILE_DIR"):
+            profile = platform_support.cli_profile_dir()
+            platform_support.set_inkscape_python_preference(profile=profile)
+            env["INKSCAPE_PROFILE_DIR"] = str(profile)
+
         return env
