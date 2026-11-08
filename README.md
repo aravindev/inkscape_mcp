@@ -87,30 +87,17 @@ On Windows the live bridge **launches and manages its own Inkscape instance** â€
 
 ### macOS
 
-Install Inkscape 1.4.x as `/Applications/Inkscape.app` (found automatically) and the
-live bridge's D-Bus pieces:
-
 ```bash
-brew install dbus glib
-
-# Python 3.14+ (inkscape-mcp newer than 1.3.1): uvx works
-claude mcp add inkscape_mcp -s user -- uvx --python 3.14 inkscape_mcp
-
-# Python 3.12/3.13: use a source checkout (pip inkex pulls in PyGObject, which has no macOS wheels)
+# Inkscape 1.4.x from inkscape.org in /Applications, then:
+brew install dbus glib uv
+git clone https://github.com/aravindev/inkscape_mcp.git
+cd inkscape_mcp
 uv sync
-claude mcp add inkscape_mcp -s user -- uv run --directory /absolute/path/to/inkscape_mcp inkscape_mcp
+claude mcp add inkscape_mcp -s user -- uv run --directory "$PWD" inkscape_mcp
 ```
 
-The MCP starts its own `dbus-daemon` and its own Inkscape, with MCP-owned profiles under
-`~/.cache/inkscape_mcp/`. A Finder-launched Inkscape is not reachable, and your own
-extensions and preferences are not loaded. See [docs/INSTALL.md](docs/INSTALL.md#macos)
-for how the live bridge saves, which extensions do not run, and the Python workaround.
-
-- If macOS gates the app after download, allow it once in System Settings â†’
-  Privacy & Security (or `xattr -dr com.apple.quarantine /Applications/Inkscape.app`
-  when the app is not managed by App Management).
-- `inkscape_live(operation="insert_svg")` uses the XML-edit path on every platform;
-  no clipboard utilities are required.
+The live bridge launches and manages its own Inkscape; use `open_file` to work on a
+document. See [docs/INSTALL.md](docs/INSTALL.md#macos).
 
 ## Configuration
 
