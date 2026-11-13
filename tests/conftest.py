@@ -115,3 +115,8 @@ def page_vs_drawing_svg(tmp_path: Path) -> Path:
     dest = tmp_path / "page_vs_drawing.svg"
     shutil.copy(FIXTURES / "page_vs_drawing.svg", dest)
     return dest
+
+
+# tests/live drives the running Inkscape GUI and edits its active document. Collect it
+# only on explicit opt-in so a plain `pytest` never touches a user's open work.
+collect_ignore_glob = [] if os.environ.get("INKSCAPE_MCP_LIVE_TESTS") == "1" else ["live/*"]

@@ -386,19 +386,38 @@ async def _export_document_async(bus: InkscapeDBus, scratch: Path) -> None:
     Serialised under BRIDGE_LOCK so a concurrent extension invocation can't interleave
     its own export-* settings with ours.
     """
-    from ..extension_bridge import BRIDGE_LOCK
+    from ..extension_bridge import BRIDGE_LOCK, _cross_process_lock
 
-    async with BRIDGE_LOCK:
+    async with BRIDGE_LOCK, _cross_process_lock():
         if scratch.exists():
             scratch.unlink()
         _trigger_export(bus, scratch)
 
+        # Inkscape creates the file first and fills it afterwards, so "size > 0" fires
+        # while it is still half-written: rasterize then exported a truncated document
+        # (blank PNGs, missing pages) and get_document_xml returned cut-off XML. Wait
+        # until the file ends with </svg> and its size has stopped changing.
         deadline = time.monotonic() + _EXPORT_POLL_TIMEOUT_S
+        last_size = -1
         while time.monotonic() < deadline:
-            if scratch.exists() and scratch.stat().st_size > 0:
+            size = scratch.stat().st_size if scratch.exists() else 0
+            if size > 0 and size == last_size and _svg_is_complete(scratch):
                 return
+            last_size = size
             await asyncio.sleep(_EXPORT_POLL_INTERVAL_S)
-        raise TimeoutError(f"Inkscape did not produce {scratch} within {_EXPORT_POLL_TIMEOUT_S}s")
+        raise TimeoutError(f"Inkscape did not finish writing {scratch} within {_EXPORT_POLL_TIMEOUT_S}s")
+
+
+def _svg_is_complete(path: Path) -> bool:
+    """True when the file's last non-whitespace bytes close the root <svg> element."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 64))
+            tail = fh.read()
+    except OSError:
+        return False
+    return tail.rstrip().endswith(b"</svg>") or tail.rstrip().endswith(b"</svg:svg>")
 
 
 def _op_ping(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
@@ -1195,6 +1214,21 @@ async def _op_rasterize(
     else:
         out_path = _SCRATCH_DIR / f"raster-{uuid.uuid4().hex[:8]}.png"
 
+    snapshot_info = _snapshot_identity(snapshot)
+    if page is not None and page > max(snapshot_info["pages"], 1):
+        return _result(
+            operation,
+            False,
+            (
+                f"page {page} does not exist: the active document "
+                f"{snapshot_info['docname'] or '(unnamed)'!r} has {max(snapshot_info['pages'], 1)} page(s). "
+                "If several documents are open, the active window may not be the one you meant."
+            ),
+            data={"active_document": snapshot_info},
+            error="no such page",
+            start=start,
+        )
+
     cmd = [
         str(config.inkscape_executable),
         "--app-id-tag=mcp",
@@ -1265,9 +1299,22 @@ async def _op_rasterize(
             "page": page,
             "dpi": dpi,
             "warning": warning,
+            "active_document": snapshot_info,
         },
         start=start,
     )
+
+
+def _snapshot_identity(path: Path) -> dict[str, Any]:
+    """Docname and page count of a snapshot — which document the export really used."""
+    import re
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"docname": "", "pages": 0}
+    match = re.search(r'sodipodi:docname="([^"]*)"', text)
+    return {"docname": match.group(1) if match else "", "pages": len(re.findall(r"<inkscape:page\b", text))}
 
 
 def _blank_png_warning(path: Path) -> str | None:
