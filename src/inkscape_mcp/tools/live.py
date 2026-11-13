@@ -1229,10 +1229,31 @@ async def _op_rasterize(
             start=start,
         )
 
+    # Inkscape 1.4's --export-page cuts the export filename at the FIRST dot of the whole
+    # path to find "the extension": ~/.cache/inkscape_mcp/raster-x.png is written to
+    # ~/.png and the requested file never appears. Export pages into a dot-free temp
+    # directory and move the PNG into place afterwards.
+    page_tmpdir: Path | None = None
+    export_path = out_path
+    if page is not None:
+        import tempfile
+
+        page_tmpdir = Path(tempfile.mkdtemp(prefix="inkmcppage", dir="/tmp" if os.name == "posix" else None))
+        if "." in str(page_tmpdir):
+            page_tmpdir.rmdir()
+            return _result(
+                operation,
+                False,
+                f"cannot export a page: no dot-free temp directory available ({page_tmpdir})",
+                error="page export path",
+                start=start,
+            )
+        export_path = page_tmpdir / "page.png"
+
     cmd = [
         str(config.inkscape_executable),
         "--app-id-tag=mcp",
-        f"--export-filename={out_path}",
+        f"--export-filename={export_path}",
         "--export-type=png",
     ]
     if target:
@@ -1269,7 +1290,14 @@ async def _op_rasterize(
     except TimeoutError:
         proc.kill()
         await proc.wait()
+        if page_tmpdir is not None:
+            shutil.rmtree(page_tmpdir, ignore_errors=True)
         return _result(operation, False, "rasterize timed out after 60s", error="timeout", start=start)
+
+    if page_tmpdir is not None:
+        if export_path.exists():
+            shutil.move(str(export_path), str(out_path))
+        shutil.rmtree(page_tmpdir, ignore_errors=True)
 
     if proc.returncode != 0 or not out_path.exists():
         stderr_tail = (stderr_b or b"").decode("utf-8", errors="replace")[-1000:]

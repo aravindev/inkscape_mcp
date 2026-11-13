@@ -349,6 +349,12 @@ async def test_rasterize_page_emits_export_page(fake_export, tmp_path, monkeypat
     assert res["success"] is True, res
     assert "--export-page=3" in fake_export["argv"]
     assert res["data"]["page"] == 3
+    # Inkscape truncates page-export paths at the first dot, so the CLI must be pointed
+    # at a dot-free temp path and the PNG moved to the requested location afterwards.
+    exported = next(a.split("=", 1)[1] for a in fake_export["argv"] if a.startswith("--export-filename="))
+    assert "." not in exported.rsplit(".png", 1)[0]
+    assert Path(res["data"]["path"]).exists()
+    assert not Path(exported).parent.exists()
 
 
 @pytest.mark.parametrize("payload", [{"page": 0}, {"page": "2"}, {"page": True}, {"page": 2, "area": "0:0:1:1"}])
