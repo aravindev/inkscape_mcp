@@ -82,7 +82,8 @@ VERSION_FILE = INSTALL_DIR / "VERSION"
 #     plugin result now names the document it ran against via `active_document`.
 # 12: cross-process isolation — plugins honour `_plugin`, claim input.json, echo
 #     `_request_id`, and write result.json atomically.
-PLUGINS_VERSION = "12"
+# 13: `from __future__ import annotations` in every plugin (AppImage ships Python 3.8).
+PLUGINS_VERSION = "13"
 
 # Used to detect whether a fresh install has been picked up by a running Inkscape.
 ECHO_ACTION = "org.inkscape.mcp.echo.noprefs"
