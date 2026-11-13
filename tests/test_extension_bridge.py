@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import MagicMock
 
@@ -18,6 +19,8 @@ def tmp_exchange(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "EXCHANGE_DIR", ex)
     monkeypatch.setattr(bridge, "INSTALL_DIR", inst)
     monkeypatch.setattr(bridge, "VERSION_FILE", inst / "VERSION")
+    # Tests pass tiny timeouts on purpose; don't let the production floor stretch them.
+    monkeypatch.setenv("INKSCAPE_MCP_EXTENSION_TIMEOUT", "0")
     return ex, inst
 
 
@@ -25,19 +28,27 @@ async def test_invoke_writes_input_fires_action_and_returns_result(tmp_exchange)
     ex, _ = tmp_exchange
     bus = MagicMock()
 
+    seen: dict = {}
+
     # Simulate the extension writing result.json the moment the action fires.
     def fake_activate(action, scope="app", window_id=1):
-        ex.mkdir(parents=True, exist_ok=True)
-        (ex / "result.json").write_text(json.dumps({"ok": True, "echoed": {"k": "v"}}))
+        seen.update(json.loads((ex / "input.json").read_text()))
+        (ex / "result.json").write_text(
+            json.dumps({"ok": True, "echoed": {"k": "v"}, "_request_id": seen["_request_id"]})
+        )
 
     bus.activate.side_effect = fake_activate
 
     result = await bridge.invoke_extension(bus, "org.inkscape.mcp.echo.noprefs", {"k": "v"})
 
     assert result.success is True
-    assert result.data == {"ok": True, "echoed": {"k": "v"}}
+    assert result.data == {"ok": True, "echoed": {"k": "v"}}  # _request_id stripped
     bus.activate.assert_called_once_with("org.inkscape.mcp.echo.noprefs", scope="app", window_id=1)
-    assert json.loads((ex / "input.json").read_text()) == {"k": "v"}
+    assert seen["k"] == "v"
+    assert seen["_plugin"] == "echo"
+    assert len(seen["_request_id"]) == 32
+    # The spec is withdrawn once answered, so a queued duplicate run finds nothing.
+    assert not (ex / "input.json").exists()
 
 
 async def test_invoke_times_out_when_no_result(tmp_exchange):
@@ -159,3 +170,96 @@ def test_bridge_status_snapshot(tmp_exchange):
     assert "installed" in snap
     assert "version" in snap
     assert snap["version"] == bridge.PLUGINS_VERSION
+
+
+# --- cross-process isolation -------------------------------------------------------
+
+
+def test_plugin_name_for_maps_action_ids():
+    assert bridge.plugin_name_for("org.inkscape.mcp.edit-xml.noprefs") == "edit_xml"
+    assert bridge.plugin_name_for("org.inkscape.mcp.path-edit.noprefs") == "path_edit"
+    assert bridge.plugin_name_for("org.inkscape.mcp.inspect.noprefs") == "inspect"
+
+
+def test_effective_timeout_floor(monkeypatch):
+    monkeypatch.delenv("INKSCAPE_MCP_EXTENSION_TIMEOUT", raising=False)
+    assert bridge.effective_timeout(10.0) == 30.0
+    assert bridge.effective_timeout(45.0) == 45.0
+    monkeypatch.setenv("INKSCAPE_MCP_EXTENSION_TIMEOUT", "90")
+    assert bridge.effective_timeout(10.0) == 90.0
+    monkeypatch.setenv("INKSCAPE_MCP_EXTENSION_TIMEOUT", "nope")
+    assert bridge.effective_timeout(10.0) == 30.0
+
+
+async def test_invoke_discards_result_for_another_request(tmp_exchange):
+    """A late result from someone else's request must not be taken as ours."""
+    ex, _ = tmp_exchange
+    bus = MagicMock()
+
+    def fake_activate(*a, **kw):
+        mine = json.loads((ex / "input.json").read_text())["_request_id"]
+        (ex / "result.json").write_text(json.dumps({"who": "foreign", "_request_id": "f" * 32}))
+
+        async def answer_later():
+            await asyncio.sleep(0.2)
+            (ex / "result.json").write_text(json.dumps({"who": "mine", "_request_id": mine}))
+
+        asyncio.get_running_loop().create_task(answer_later())
+
+    bus.activate.side_effect = fake_activate
+    result = await bridge.invoke_extension(bus, "x.action", {}, timeout_s=2.0)
+    assert result.success is True
+    assert result.data == {"who": "mine"}
+
+
+async def test_invoke_accepts_legacy_result_without_request_id(tmp_exchange):
+    ex, _ = tmp_exchange
+    bus = MagicMock()
+    bus.activate.side_effect = lambda *a, **kw: (ex / "result.json").write_text(json.dumps({"ok": True}))
+    result = await bridge.invoke_extension(bus, "x.action", {}, timeout_s=1.0)
+    assert result.success is True
+    assert result.data == {"ok": True}
+
+
+async def test_timeout_withdraws_input(tmp_exchange):
+    """After giving up, the spec is removed so a late-running extension can't execute it."""
+    ex, _ = tmp_exchange
+    bus = MagicMock()
+    result = await bridge.invoke_extension(bus, "x.action", {"edit": 1}, timeout_s=0.15)
+    assert result.success is False
+    assert not (ex / "input.json").exists()
+
+
+async def test_cross_process_lock_excludes_other_holders(tmp_exchange):
+    """While another process holds exchange/.lock, invoke waits instead of trampling."""
+    import fcntl
+    import os
+
+    ex, _ = tmp_exchange
+    ex.mkdir(parents=True, exist_ok=True)
+    fd = os.open(ex / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    bus = MagicMock()
+    try:
+        result = await asyncio.wait_for(
+            _invoke_with_short_lock_wait(bus), timeout=5
+        )
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+    assert result.success is False
+    assert "exchange lock" in result.error
+    bus.activate.assert_not_called()
+
+
+async def _invoke_with_short_lock_wait(bus):
+    original = bridge._cross_process_lock
+
+    def short(wait_s=0.2):
+        return original(wait_s)
+
+    bridge._cross_process_lock = short
+    try:
+        return await bridge.invoke_extension(bus, "x.action", {}, timeout_s=0.15)
+    finally:
+        bridge._cross_process_lock = original
