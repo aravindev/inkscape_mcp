@@ -28,6 +28,10 @@ Writes ``~/.cache/inkscape_mcp/exchange/result.json``:
     {"ok": False, "error": "<message>"}
 """
 
+# Inkscape's AppImage ships Python 3.8: keep annotations lazy so PEP 585 generics
+# like dict[str, Any] don't raise TypeError at import time.
+from __future__ import annotations
+
 import json
 import math
 import os
@@ -37,6 +41,43 @@ from pathlib import Path
 import inkex
 
 EXCHANGE_DIR = Path(os.path.expanduser("~/.cache/inkscape_mcp/exchange"))
+
+# Cross-process isolation (see extension_bridge.py). The bridge addresses each spec
+# to one plugin via `_plugin` and tags it with `_request_id`; we echo the id back.
+_PLUGIN_NAME = "path_edit"
+_REQUEST_ID = None
+
+
+def _claim_spec():
+    """Return the spec addressed to this plugin and consume it, or None if there is none.
+
+    None means: no pending request (a late, queued duplicate of an invocation whose
+    caller already gave up) or a request meant for another plugin. Either way the
+    plugin must not touch the document or write a result.
+    """
+    global _REQUEST_ID
+    src = EXCHANGE_DIR / "input.json"
+    try:
+        raw = src.read_text()
+    except FileNotFoundError:
+        return None
+    spec = json.loads(raw)
+    if isinstance(spec, dict):
+        target = spec.get("_plugin")
+        if target is not None and target != _PLUGIN_NAME:
+            return None
+        claimed = EXCHANGE_DIR / f".claimed-{_PLUGIN_NAME}-{os.getpid()}.json"
+        try:
+            os.replace(src, claimed)
+        except FileNotFoundError:
+            return None
+        try:
+            claimed.unlink()
+        except OSError:
+            pass
+        _REQUEST_ID = spec.pop("_request_id", None)
+        spec.pop("_plugin", None)
+    return spec
 
 _NODETYPES_ATTR = "{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}nodetypes"
 
@@ -55,7 +96,12 @@ _VALID_OPS = frozenset(
 
 def _write_result(payload: dict) -> None:
     EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
-    (EXCHANGE_DIR / "result.json").write_text(json.dumps(payload))
+    if _REQUEST_ID is not None:
+        payload = {**payload, "_request_id": _REQUEST_ID}
+    # Write-then-rename so the bridge never reads a half-written result.
+    tmp = EXCHANGE_DIR / f".result-{os.getpid()}.tmp"
+    tmp.write_text(json.dumps(payload))
+    os.replace(tmp, EXCHANGE_DIR / "result.json")
 
 
 def _document_identity(root) -> dict:
@@ -281,9 +327,11 @@ class McpPathEdit(inkex.EffectExtension):
     def effect(self) -> None:
         EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
         try:
-            spec = json.loads((EXCHANGE_DIR / "input.json").read_text())
+            spec = _claim_spec()
         except (OSError, json.JSONDecodeError) as exc:
             _err(f"could not read input.json: {exc}")
+            return
+        if spec is None:
             return
 
         if not isinstance(spec, dict):

@@ -386,19 +386,38 @@ async def _export_document_async(bus: InkscapeDBus, scratch: Path) -> None:
     Serialised under BRIDGE_LOCK so a concurrent extension invocation can't interleave
     its own export-* settings with ours.
     """
-    from ..extension_bridge import BRIDGE_LOCK
+    from ..extension_bridge import BRIDGE_LOCK, _cross_process_lock
 
-    async with BRIDGE_LOCK:
+    async with BRIDGE_LOCK, _cross_process_lock():
         if scratch.exists():
             scratch.unlink()
         _trigger_export(bus, scratch)
 
+        # Inkscape creates the file first and fills it afterwards, so "size > 0" fires
+        # while it is still half-written: rasterize then exported a truncated document
+        # (blank PNGs, missing pages) and get_document_xml returned cut-off XML. Wait
+        # until the file ends with </svg> and its size has stopped changing.
         deadline = time.monotonic() + _EXPORT_POLL_TIMEOUT_S
+        last_size = -1
         while time.monotonic() < deadline:
-            if scratch.exists() and scratch.stat().st_size > 0:
+            size = scratch.stat().st_size if scratch.exists() else 0
+            if size > 0 and size == last_size and _svg_is_complete(scratch):
                 return
+            last_size = size
             await asyncio.sleep(_EXPORT_POLL_INTERVAL_S)
-        raise TimeoutError(f"Inkscape did not produce {scratch} within {_EXPORT_POLL_TIMEOUT_S}s")
+        raise TimeoutError(f"Inkscape did not finish writing {scratch} within {_EXPORT_POLL_TIMEOUT_S}s")
+
+
+def _svg_is_complete(path: Path) -> bool:
+    """True when the file's last non-whitespace bytes close the root <svg> element."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            fh.seek(max(0, fh.tell() - 64))
+            tail = fh.read()
+    except OSError:
+        return False
+    return tail.rstrip().endswith(b"</svg>") or tail.rstrip().endswith(b"</svg:svg>")
 
 
 def _op_ping(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
@@ -427,15 +446,97 @@ def _op_ping(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
     )
 
 
-async def _op_get_document_xml(bus: InkscapeDBus, operation: str, start: float) -> dict[str, Any]:
+# Above this many characters get_document_xml returns the snapshot path and a structural
+# summary instead of the XML itself: a 16-page icon sheet is ~90k characters, which
+# overflows an agent's tool-result budget and buys nothing over reading the file.
+_DOCUMENT_XML_INLINE_LIMIT = 20_000
+
+
+def _summarize_svg(xml: str) -> dict[str, Any]:
+    """Pages and top-level groups of an SVG string — enough to decide what to read next."""
+    import xml.etree.ElementTree as ET
+
+    inkscape_ns = "{http://www.inkscape.org/namespaces/inkscape}"
+    try:
+        root = ET.fromstring(xml.encode("utf-8"))
+    except ET.ParseError as exc:
+        return {"parse_error": str(exc)}
+    pages = [
+        {
+            "id": el.get("id"),
+            "label": el.get(f"{inkscape_ns}label"),
+            "x": el.get("x"),
+            "y": el.get("y"),
+            "width": el.get("width"),
+            "height": el.get("height"),
+        }
+        for el in root.iter(f"{inkscape_ns}page")
+    ]
+    top: list[dict[str, Any]] = []
+    for child in root:
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag in ("defs", "namedview", "metadata"):
+            continue
+        style = (child.get("style") or "").replace(" ", "")
+        top.append(
+            {
+                "tag": tag,
+                "id": child.get("id"),
+                "label": child.get(f"{inkscape_ns}label"),
+                "hidden": "display:none" in style or child.get("display") == "none",
+                "children": len(child),
+            }
+        )
+    return {"viewBox": root.get("viewBox"), "pages": pages, "top_level": top}
+
+
+async def _op_get_document_xml(
+    bus: InkscapeDBus, operation: str, payload: str, start: float
+) -> dict[str, Any]:
+    """Snapshot the live document. Small documents come back inline; large ones as a path.
+
+    ``payload`` — optional JSON ``{"full": true}`` to force the XML inline regardless of
+    size, or ``{"max_chars": N}`` to move the inline threshold.
+    """
+    import json as _json
+
+    args: dict[str, Any] = {}
+    if payload:
+        try:
+            parsed = _json.loads(payload)
+        except _json.JSONDecodeError as exc:
+            return _result(operation, False, f"payload is not valid JSON: {exc}", error=str(exc), start=start)
+        if isinstance(parsed, dict):
+            args = parsed
+    limit = args.get("max_chars", _DOCUMENT_XML_INLINE_LIMIT)
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+        return _result(operation, False, f"max_chars must be a non-negative integer (got {limit!r})", error="bad max_chars", start=start)
+
     scratch = _scratch_path()
     await _export_document_async(bus, scratch)
     xml = scratch.read_text(encoding="utf-8")
+    if args.get("full") or len(xml) <= limit:
+        return _result(
+            operation,
+            True,
+            f"Exported document XML ({len(xml)} bytes)",
+            data={"xml": xml, "path": str(scratch)},
+            start=start,
+        )
     return _result(
         operation,
         True,
-        f"Exported document XML ({len(xml)} bytes)",
-        data={"xml": xml, "path": str(scratch)},
+        (
+            f"Document XML is {len(xml)} characters (over {limit}); saved to {scratch}. "
+            "Read that file, use inspect_element / inspect_layers for specific parts, "
+            'or pass payload={"full": true} to get it inline.'
+        ),
+        data={
+            "path": str(scratch),
+            "bytes": len(xml),
+            "inline": False,
+            "summary": _summarize_svg(xml),
+        },
         start=start,
     )
 
@@ -1045,8 +1146,14 @@ async def _op_rasterize(
 ) -> dict[str, Any]:
     """Render the current document (or a single element / area) to PNG.
 
-    ``target`` — element id to render (uses ``--export-id``). Empty → full doc.
-    ``payload`` — optional JSON: ``{"area": "x:y:w:h", "dpi": 96, "filename": "<abs>"}``.
+    ``target`` — element id to render (uses ``--export-id``). Empty → the first page,
+    which is what Inkscape exports by default; pass ``page`` or ``area`` for others.
+    ``payload`` — optional JSON: ``{"page": 2, "area": "x0:y0:x1:y1", "dpi": 96,
+    "filename": "<abs>"}``. ``page`` is 1-based; ``area`` is two corners in user units
+    (Inkscape's ``--export-area``), not x:y:width:height.
+
+    The result carries a ``warning`` when the PNG is a single flat colour — typically a
+    hidden page/layer or an area that misses the artwork.
 
     Saves a fresh snapshot of the live doc first so the export reflects
     in-memory state, then shells to Inkscape's CLI for the export. Returns
@@ -1076,6 +1183,18 @@ async def _op_rasterize(
     area = args.get("area")
     dpi = args.get("dpi")
     filename = args.get("filename")
+    page = args.get("page")
+    if page is not None:
+        if not isinstance(page, int) or isinstance(page, bool) or page < 1:
+            return _result(operation, False, f"page must be an integer >= 1 (got {page!r})", error="bad page", start=start)
+        if area or target:
+            return _result(
+                operation,
+                False,
+                "page cannot be combined with area or target",
+                error="conflicting options",
+                start=start,
+            )
 
     # Snapshot the live doc so the export reflects in-memory state.
     snapshot = _scratch_path()
@@ -1095,10 +1214,46 @@ async def _op_rasterize(
     else:
         out_path = _SCRATCH_DIR / f"raster-{uuid.uuid4().hex[:8]}.png"
 
+    snapshot_info = _snapshot_identity(snapshot)
+    if page is not None and page > max(snapshot_info["pages"], 1):
+        return _result(
+            operation,
+            False,
+            (
+                f"page {page} does not exist: the active document "
+                f"{snapshot_info['docname'] or '(unnamed)'!r} has {max(snapshot_info['pages'], 1)} page(s). "
+                "If several documents are open, the active window may not be the one you meant."
+            ),
+            data={"active_document": snapshot_info},
+            error="no such page",
+            start=start,
+        )
+
+    # Inkscape 1.4's --export-page cuts the export filename at the FIRST dot of the whole
+    # path to find "the extension": ~/.cache/inkscape_mcp/raster-x.png is written to
+    # ~/.png and the requested file never appears. Export pages into a dot-free temp
+    # directory and move the PNG into place afterwards.
+    page_tmpdir: Path | None = None
+    export_path = out_path
+    if page is not None:
+        import tempfile
+
+        page_tmpdir = Path(tempfile.mkdtemp(prefix="inkmcppage", dir="/tmp" if os.name == "posix" else None))
+        if "." in str(page_tmpdir):
+            page_tmpdir.rmdir()
+            return _result(
+                operation,
+                False,
+                f"cannot export a page: no dot-free temp directory available ({page_tmpdir})",
+                error="page export path",
+                start=start,
+            )
+        export_path = page_tmpdir / "page.png"
+
     cmd = [
         str(config.inkscape_executable),
         "--app-id-tag=mcp",
-        f"--export-filename={out_path}",
+        f"--export-filename={export_path}",
         "--export-type=png",
     ]
     if target:
@@ -1108,11 +1263,13 @@ async def _op_rasterize(
             return _result(
                 operation,
                 False,
-                f"area must be 'x:y:w:h' (got {area!r})",
+                f"area must be 'x0:y0:x1:y1' (got {area!r})",
                 error="bad area",
                 start=start,
             )
         cmd.append(f"--export-area={area}")
+    if page is not None:
+        cmd.append(f"--export-page={page}")
     if dpi:
         try:
             cmd.append(f"--export-dpi={float(dpi)}")
@@ -1133,7 +1290,14 @@ async def _op_rasterize(
     except TimeoutError:
         proc.kill()
         await proc.wait()
+        if page_tmpdir is not None:
+            shutil.rmtree(page_tmpdir, ignore_errors=True)
         return _result(operation, False, "rasterize timed out after 60s", error="timeout", start=start)
+
+    if page_tmpdir is not None:
+        if export_path.exists():
+            shutil.move(str(export_path), str(out_path))
+        shutil.rmtree(page_tmpdir, ignore_errors=True)
 
     if proc.returncode != 0 or not out_path.exists():
         stderr_tail = (stderr_b or b"").decode("utf-8", errors="replace")[-1000:]
@@ -1147,19 +1311,58 @@ async def _op_rasterize(
         )
 
     size = out_path.stat().st_size
+    warning = _blank_png_warning(out_path)
+    message = f"rasterized to {out_path} ({size} bytes)"
+    if warning:
+        message += f" — WARNING: {warning}"
     return _result(
         operation,
         True,
-        f"rasterized to {out_path} ({size} bytes)",
+        message,
         data={
             "path": str(out_path),
             "bytes": size,
             "target": target or None,
             "area": area,
+            "page": page,
             "dpi": dpi,
+            "warning": warning,
+            "active_document": snapshot_info,
         },
         start=start,
     )
+
+
+def _snapshot_identity(path: Path) -> dict[str, Any]:
+    """Docname and page count of a snapshot — which document the export really used."""
+    import re
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"docname": "", "pages": 0}
+    match = re.search(r'sodipodi:docname="([^"]*)"', text)
+    return {"docname": match.group(1) if match else "", "pages": len(re.findall(r"<inkscape:page\b", text))}
+
+
+def _blank_png_warning(path: Path) -> str | None:
+    """Describe the PNG as blank when every pixel is the same colour, else None."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            rgba = img.convert("RGBA")
+            extrema = rgba.getextrema()
+    except Exception:  # Pillow missing or unreadable PNG: no opinion.
+        return None
+    if all(lo == hi for lo, hi in extrema):
+        colour = tuple(lo for lo, _ in extrema)
+        what = "fully transparent" if colour[3] == 0 else f"a single flat colour RGBA{colour}"
+        return (
+            f"the image is {what} — nothing visible was rendered. The page may be hidden or "
+            "empty (rasterize defaults to page 1; pass page or area), or the area misses the artwork."
+        )
+    return None
 
 
 async def _op_edit_xml(
@@ -1485,7 +1688,7 @@ async def inkscape_live(
 
     try:
         if operation == "get_document_xml":
-            return await _op_get_document_xml(bus, operation, start)
+            return await _op_get_document_xml(bus, operation, payload, start)
         if operation == "get_selection":
             return await _op_get_selection(bus, operation, start)
         if operation == "set_selection":

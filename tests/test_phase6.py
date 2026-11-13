@@ -330,3 +330,134 @@ async def test_rasterize_subprocess_failure_propagates(fake_export, monkeypatch,
     assert res["success"] is False
     assert "rc=1" in res["message"]
     assert "bad input" in res["message"]
+
+
+async def test_rasterize_page_emits_export_page(fake_export, tmp_path, monkeypatch):
+    async def three_pages(b, p):
+        Path(p).write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape">'
+            + '<inkscape:page x="0" y="0" width="1" height="1"/>' * 3
+            + "</svg>"
+        )
+
+    monkeypatch.setattr(live, "_export_document_async", three_pages)
+    monkeypatch.setattr(live, "_SCRATCH_DIR", tmp_path)
+    monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
+    res = await live._op_rasterize(
+        MagicMock(), "rasterize", "", json.dumps({"page": 3}), MagicMock(), _config_stub(tmp_path), time.perf_counter()
+    )
+    assert res["success"] is True, res
+    assert "--export-page=3" in fake_export["argv"]
+    assert res["data"]["page"] == 3
+    # Inkscape truncates page-export paths at the first dot, so the CLI must be pointed
+    # at a dot-free temp path and the PNG moved to the requested location afterwards.
+    exported = next(a.split("=", 1)[1] for a in fake_export["argv"] if a.startswith("--export-filename="))
+    assert "." not in exported.rsplit(".png", 1)[0]
+    assert Path(res["data"]["path"]).exists()
+    assert not Path(exported).parent.exists()
+
+
+@pytest.mark.parametrize("payload", [{"page": 0}, {"page": "2"}, {"page": True}, {"page": 2, "area": "0:0:1:1"}])
+async def test_rasterize_rejects_bad_page(fake_export, tmp_path, monkeypatch, payload):
+    monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
+    res = await live._op_rasterize(
+        MagicMock(), "rasterize", "", json.dumps(payload), MagicMock(), _config_stub(tmp_path), time.perf_counter()
+    )
+    assert res["success"] is False
+    assert fake_export["argv"] is None
+
+
+def test_blank_png_warning_detects_flat_images(tmp_path):
+    from PIL import Image
+
+    blank = tmp_path / "blank.png"
+    Image.new("RGBA", (8, 8), (255, 255, 255, 255)).save(blank)
+    clear = tmp_path / "clear.png"
+    Image.new("RGBA", (8, 8), (0, 0, 0, 0)).save(clear)
+    art = tmp_path / "art.png"
+    img = Image.new("RGBA", (8, 8), (255, 255, 255, 255))
+    img.putpixel((3, 3), (30, 110, 230, 255))
+    img.save(art)
+
+    assert "single flat colour" in live._blank_png_warning(blank)
+    assert "fully transparent" in live._blank_png_warning(clear)
+    assert live._blank_png_warning(art) is None
+    assert live._blank_png_warning(tmp_path / "missing.png") is None
+
+
+async def test_get_document_xml_large_returns_path_and_summary(tmp_path, monkeypatch):
+    big = (
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"'
+        ' xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd" viewBox="0 0 10 10">'
+        '<sodipodi:namedview><inkscape:page id="p1" x="0" y="0" width="10" height="10" inkscape:label="Uno"/>'
+        "</sodipodi:namedview>"
+        '<g id="capa" inkscape:label="Capa" style="display:none">' + "<rect/>" * 50 + "</g></svg>"
+    )
+
+    async def fake_export_async(b, p):
+        Path(p).write_text(big)
+
+    monkeypatch.setattr(live, "_export_document_async", fake_export_async)
+    monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
+
+    res = await live._op_get_document_xml(MagicMock(), "get_document_xml", json.dumps({"max_chars": 100}), time.perf_counter())
+    assert res["success"] is True
+    assert "xml" not in res["data"]
+    summary = res["data"]["summary"]
+    assert summary["pages"][0]["label"] == "Uno"
+    assert summary["top_level"] == [{"tag": "g", "id": "capa", "label": "Capa", "hidden": True, "children": 50}]
+
+    full = await live._op_get_document_xml(
+        MagicMock(), "get_document_xml", json.dumps({"full": True, "max_chars": 100}), time.perf_counter()
+    )
+    assert full["data"]["xml"] == big
+
+    small = await live._op_get_document_xml(MagicMock(), "get_document_xml", "", time.perf_counter())
+    assert small["data"]["xml"] == big
+
+
+def test_svg_is_complete(tmp_path):
+    f = tmp_path / "s.svg"
+    f.write_text('<svg xmlns="http://www.w3.org/2000/svg"><g id="a">')
+    assert live._svg_is_complete(f) is False
+    f.write_text('<svg xmlns="http://www.w3.org/2000/svg"><g id="a"/></svg>\n')
+    assert live._svg_is_complete(f) is True
+    assert live._svg_is_complete(tmp_path / "missing.svg") is False
+
+
+async def test_export_waits_for_a_fully_written_snapshot(tmp_path, monkeypatch):
+    """Inkscape fills the file after creating it; a half-written snapshot must not count."""
+    from inkscape_mcp import extension_bridge
+
+    monkeypatch.setattr(extension_bridge, "EXCHANGE_DIR", tmp_path / "exchange")
+    snap = tmp_path / "snap.svg"
+
+    def fake_trigger(bus, path):
+        path.write_text('<svg xmlns="http://www.w3.org/2000/svg"><g id="half">')
+
+        async def finish():
+            await asyncio.sleep(0.3)
+            path.write_text('<svg xmlns="http://www.w3.org/2000/svg"><g id="half"/></svg>')
+
+        asyncio.get_running_loop().create_task(finish())
+
+    monkeypatch.setattr(live, "_trigger_export", fake_trigger)
+    await live._export_document_async(MagicMock(), snap)
+    assert snap.read_text().endswith("</svg>")
+
+
+async def test_rasterize_page_beyond_document_is_a_clear_error(tmp_path, monkeypatch):
+    async def one_page_export(b, p):
+        Path(p).write_text(
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"'
+            ' sodipodi:docname="live_doc.svg"/>'
+        )
+
+    monkeypatch.setattr(live, "_export_document_async", one_page_export)
+    monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
+    res = await live._op_rasterize(
+        MagicMock(), "rasterize", "", json.dumps({"page": 2}), MagicMock(), _config_stub(tmp_path), time.perf_counter()
+    )
+    assert res["success"] is False
+    assert res["error"] == "no such page"
+    assert "live_doc.svg" in res["message"]

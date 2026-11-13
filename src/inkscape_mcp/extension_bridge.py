@@ -19,8 +19,18 @@ Concurrency: the filenames above are fixed, so two overlapping invocations would
 trample each other — B's spec would overwrite A's input.json, and B's unlink would
 delete the result A is waiting for. Per-call unique names aren't an option: the
 `.noprefs` D-Bus action carries no arguments, so the plugin has no way to be told
-which file to read. Instead every invocation is serialised through `BRIDGE_LOCK`,
-which also guards the shared (non-thread-safe) jeepney connection.
+which file to read. Three layers keep invocations apart:
+
+  * `BRIDGE_LOCK` serialises calls inside one server process (and guards the shared,
+    non-thread-safe jeepney connection).
+  * `exchange/.lock` (an `flock`) serialises calls ACROSS server processes. Every
+    MCP client session spawns its own server, all driving the same Inkscape through
+    the same exchange directory; without this, one session read another's result.
+  * Every spec carries `_request_id` and `_plugin`. A plugin ignores a spec addressed
+    to another plugin, claims the spec by renaming input.json (so a late, queued
+    duplicate finds nothing to run), and echoes `_request_id` in its result; the
+    bridge rejects any result whose id is not its own. On timeout the bridge withdraws
+    input.json so an invocation Inkscape runs later cannot execute a stale spec.
 """
 
 from __future__ import annotations
@@ -30,12 +40,19 @@ import json
 import logging
 import os
 import time
+import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from .dbus_client import InkscapeDBus
+
+try:  # POSIX only; Windows falls back to the in-process lock alone.
+    import fcntl
+except ImportError:  # pragma: no cover - exercised on Windows
+    fcntl = None  # type: ignore[assignment]
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +80,10 @@ VERSION_FILE = INSTALL_DIR / "VERSION"
 # 11: computed_style resolves the CSS cascade in the right order (inline style="" beats
 #     the presentation attribute — it used to report the losing declaration), and every
 #     plugin result now names the document it ran against via `active_document`.
-PLUGINS_VERSION = "11"
+# 12: cross-process isolation — plugins honour `_plugin`, claim input.json, echo
+#     `_request_id`, and write result.json atomically.
+# 13: `from __future__ import annotations` in every plugin (AppImage ships Python 3.8).
+PLUGINS_VERSION = "13"
 
 # Used to detect whether a fresh install has been picked up by a running Inkscape.
 ECHO_ACTION = "org.inkscape.mcp.echo.noprefs"
@@ -75,6 +95,68 @@ class ExchangeResult:
     data: dict[str, Any] = field(default_factory=dict)
     stderr: str = ""
     error: str = ""
+
+
+# Lower bound for every extension timeout, in seconds. Heavy documents (many pages,
+# filters, clones) routinely take longer than the 10-15 s some call sites ask for.
+# Override with INKSCAPE_MCP_EXTENSION_TIMEOUT.
+_DEFAULT_MIN_TIMEOUT_S = 30.0
+# How long a result.json may stay unparseable before it counts as malformed.
+_MALFORMED_GRACE_S = 0.5
+# How long to wait for another server process to release the exchange directory.
+_CROSS_PROCESS_LOCK_WAIT_S = 120.0
+
+
+def _min_timeout_s() -> float:
+    raw = os.environ.get("INKSCAPE_MCP_EXTENSION_TIMEOUT", "")
+    try:
+        value = float(raw) if raw else _DEFAULT_MIN_TIMEOUT_S
+    except ValueError:
+        log.warning("ignoring non-numeric INKSCAPE_MCP_EXTENSION_TIMEOUT=%r", raw)
+        value = _DEFAULT_MIN_TIMEOUT_S
+    return max(value, 0.0)
+
+
+def effective_timeout(timeout_s: float) -> float:
+    """The timeout actually applied: the caller's value, floored by the configured minimum."""
+    return max(timeout_s, _min_timeout_s())
+
+
+def plugin_name_for(action: str) -> str:
+    """'org.inkscape.mcp.edit-xml.noprefs' -> 'edit_xml' (the name plugins match against)."""
+    name = action.removeprefix("org.inkscape.mcp.").removesuffix(".noprefs")
+    return name.replace("-", "_")
+
+
+@asynccontextmanager
+async def _cross_process_lock(wait_s: float = _CROSS_PROCESS_LOCK_WAIT_S):
+    """Hold `exchange/.lock` so no other MCP server process uses the exchange meanwhile.
+
+    Polls a non-blocking flock rather than blocking, so the event loop stays responsive.
+    """
+    if fcntl is None:
+        yield
+        return
+    EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
+    fd = os.open(EXCHANGE_DIR / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"another inkscape_mcp process held the exchange lock for over {wait_s:.0f}s"
+                    ) from None
+                await asyncio.sleep(0.05)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 async def invoke_extension(
@@ -93,11 +175,27 @@ async def invoke_extension(
     parsed result, or an ExchangeResult with success=False on any failure
     (timeout, malformed result, bus error).
 
-    Held under `BRIDGE_LOCK` for its whole duration — the exchange filenames are fixed,
-    so a concurrent call would clobber this one's input and result.
+    Held under `BRIDGE_LOCK` (in-process) and `exchange/.lock` (cross-process) for its
+    whole duration — the exchange filenames are fixed, so a concurrent call would
+    clobber this one's input and result.
     """
     async with BRIDGE_LOCK:
-        return await _invoke_extension_locked(bus, action, spec, scope=scope, window_id=window_id, timeout_s=timeout_s)
+        try:
+            async with _cross_process_lock():
+                return await _invoke_extension_locked(
+                    bus, action, spec, scope=scope, window_id=window_id, timeout_s=timeout_s
+                )
+        except TimeoutError as exc:
+            return ExchangeResult(success=False, error=str(exc))
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        log.debug("could not remove %s", path, exc_info=True)
 
 
 async def _invoke_extension_locked(
@@ -109,20 +207,20 @@ async def _invoke_extension_locked(
     window_id: int,
     timeout_s: float,
 ) -> ExchangeResult:
-    """Body of `invoke_extension`. Caller must already hold `BRIDGE_LOCK`."""
+    """Body of `invoke_extension`. Caller must already hold both locks."""
     EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
     input_path = EXCHANGE_DIR / "input.json"
     result_path = EXCHANGE_DIR / "result.json"
     stderr_path = EXCHANGE_DIR / "stderr.txt"
 
     for p in (result_path, stderr_path):
-        if p.exists():
-            try:
-                p.unlink()
-            except OSError:
-                pass
+        _unlink_quietly(p)
 
-    input_path.write_text(json.dumps(spec))
+    request_id = uuid.uuid4().hex
+    envelope = {**spec, "_request_id": request_id, "_plugin": plugin_name_for(action)}
+    tmp_input = EXCHANGE_DIR / f".input-{request_id}.tmp"
+    tmp_input.write_text(json.dumps(envelope))
+    os.replace(tmp_input, input_path)
 
     # Deliberately NOT run via asyncio.to_thread: InkscapeDBus keeps one shared jeepney
     # connection, and handing it to a worker thread while another coroutine uses it from
@@ -132,14 +230,44 @@ async def _invoke_extension_locked(
     try:
         bus.activate(action, scope=scope, window_id=window_id)
     except Exception as exc:
+        _unlink_quietly(input_path)
         return ExchangeResult(success=False, error=f"D-Bus activate failed: {exc}")
 
+    timeout_s = effective_timeout(timeout_s)
     deadline = time.monotonic() + timeout_s
+    data: Any = None
+    malformed_since: float | None = None
     while time.monotonic() < deadline:
         if result_path.exists() and result_path.stat().st_size > 0:
-            break
+            try:
+                data = json.loads(result_path.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                # Legacy plugins write non-atomically, so a parse failure may just be a
+                # half-written file. Allow a short grace period before calling it bad.
+                now = time.monotonic()
+                malformed_since = malformed_since or now
+                if now - malformed_since > _MALFORMED_GRACE_S:
+                    _unlink_quietly(input_path)
+                    return ExchangeResult(success=False, error=f"result not valid JSON: {exc}")
+                await asyncio.sleep(0.05)
+                continue
+            malformed_since = None
+            if not isinstance(data, dict):
+                _unlink_quietly(input_path)
+                return ExchangeResult(success=False, error="result must decode to a JSON object")
+            echoed = data.pop("_request_id", None)
+            if echoed is None or echoed == request_id:
+                break
+            # A result for some other request (a late invocation of an earlier,
+            # timed-out call). Discard it and keep waiting for ours.
+            log.warning("discarding foreign extension result (request %s)", echoed)
+            _unlink_quietly(result_path)
+            data = None
         await asyncio.sleep(0.05)
     else:
+        # Withdraw the spec so a queued invocation that runs later finds nothing to do
+        # instead of executing a stale request against the document.
+        _unlink_quietly(input_path)
         stderr = _read_text_safe(stderr_path)
         return ExchangeResult(
             success=False,
@@ -147,14 +275,7 @@ async def _invoke_extension_locked(
             stderr=stderr,
         )
 
-    try:
-        data = json.loads(result_path.read_text())
-    except json.JSONDecodeError as exc:
-        return ExchangeResult(success=False, error=f"result not valid JSON: {exc}")
-
-    if not isinstance(data, dict):
-        return ExchangeResult(success=False, error="result must decode to a JSON object")
-
+    _unlink_quietly(input_path)
     return ExchangeResult(success=True, data=data)
 
 

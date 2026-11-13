@@ -46,7 +46,7 @@ The canvas is shared, so collaborate rather than guess.
 | Structurally edit the XML (add to `<defs>`, restructure, rewrite `d` data, set arbitrary attribute on an arbitrary node) | `inkscape_live(operation="edit_xml", target="<xpath>", payload="<json>")` |
 | Per-node bezier edits on a path (move node, set handle, smooth/cusp, insert node, subdivide) | `inkscape_live(operation="path_edit", target="<path-id>", payload="<json>")` |
 | Read what the user has selected | `inkscape_live(operation="get_selection")` → `{count, ids, objects[{id,type,bbox}], text}` |
-| Read the full document XML | `inkscape_live(operation="get_document_xml")` |
+| Read the full document XML | `inkscape_live(operation="get_document_xml")` — over 20k chars it returns `{path, summary}` (pages + top-level groups) instead of the XML; `payload='{"full":true}'` forces it inline |
 | Select something by id or CSS selector | `inkscape_live(operation="set_selection", target="<id-or-selector>")` |
 | Check the bridge is live | `inkscape_live(operation="ping")` |
 
@@ -137,7 +137,7 @@ Auto-save writes the document to its own file, so it needs one. For a new, never
 | Read selection | `get_selection()` → `{count, ids, objects[{id,type,bbox}], text}` |
 | Inspect one element (bbox + computed style + ancestors) | `inkscape_live(operation="inspect_element", target="<id>")` — bbox is post-transform document coords; `computed_style` is full CSS-cascade resolution (what the renderer actually uses); `ancestors` includes `is_layer` markers |
 | Run arbitrary inkex Python | `inkscape_live(operation="execute_inkex", payload="<python>")` — globals: `svg`, `doc`, `inkex`, `etree`, `json`, `math`, `set_result(x)`. Assign to `result` or define `main()` returning a value. The broadest analytical + manipulation primitive — use for multi-element queries, geometric math, complex mutations not expressible via `apply_action`/`edit_xml`. One `MCP: Execute` undo entry (or `[unchanged]` if read-only). |
-| Rasterize the doc / an element / an area to PNG | `inkscape_live(operation="rasterize", target="<id-or-empty>", payload='{"area":"x:y:w:h","dpi":192,"filename":"<abs>"}')` — defaults to a scratch path under `~/.cache/inkscape_mcp/`. Returns `{path, bytes}`. Gives the agent "eyes" for visual diff, occlusion, color sampling. |
+| Rasterize the doc / an element / an area to PNG | `inkscape_live(operation="rasterize", target="<id-or-empty>", payload='{"page":2}'` or `'{"area":"x0:y0:x1:y1","dpi":192,"filename":"<abs>"}')` — no target/page/area renders page 1 only; `area` is two corners, not x:y:w:h. Defaults to a scratch path under `~/.cache/inkscape_mcp/`. Returns `{path, bytes, warning}`; `warning` is set when the PNG is one flat colour (hidden page/layer, area missing the art). Gives the agent "eyes" for visual diff, occlusion, color sampling. |
 | Discover installed extensions (system + user) | `inkscape_extension(operation="list")` — `target` is an optional substring filter |
 | Inspect one extension's params | `inkscape_extension(operation="describe", target="<id>")` — returns the INX-declared param schema |
 | Run an extension headlessly with custom params | `inkscape_extension(operation="run", target="<id>", params='<json>', input_path="<abs>", output_path?="<abs>")` |
