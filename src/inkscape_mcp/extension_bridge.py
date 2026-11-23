@@ -23,7 +23,7 @@ which file to read. Three layers keep invocations apart:
 
   * `BRIDGE_LOCK` serialises calls inside one server process (and guards the shared,
     non-thread-safe jeepney connection).
-  * `exchange/.lock` (an `flock`) serialises calls ACROSS server processes. Every
+  * `exchange/.lock` (flock / msvcrt.locking) serialises calls ACROSS server processes. Every
     MCP client session spawns its own server, all driving the same Inkscape through
     the same exchange directory; without this, one session read another's result.
   * Every spec carries `_request_id` and `_plugin`. A plugin ignores a spec addressed
@@ -39,8 +39,10 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from importlib import resources
@@ -49,10 +51,36 @@ from typing import Any
 
 from .dbus_client import InkscapeDBus
 
-try:  # POSIX only; Windows falls back to the in-process lock alone.
+if sys.platform == "win32":
+    import msvcrt
+
+    def _try_lock(fd: int) -> bool:
+        """Non-blocking exclusive lock on `fd`; False if another process holds it."""
+        os.lseek(fd, 0, os.SEEK_SET)
+        try:
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+
+else:
     import fcntl
-except ImportError:  # pragma: no cover - exercised on Windows
-    fcntl = None  # type: ignore[assignment]
+
+    def _try_lock(fd: int) -> bool:
+        """Non-blocking exclusive lock on `fd`; False if another process holds it."""
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+
+    def _unlock(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+
 
 log = logging.getLogger(__name__)
 
@@ -129,32 +157,24 @@ def plugin_name_for(action: str) -> str:
 
 
 @asynccontextmanager
-async def _cross_process_lock(wait_s: float = _CROSS_PROCESS_LOCK_WAIT_S):
+async def _cross_process_lock(wait_s: float = _CROSS_PROCESS_LOCK_WAIT_S) -> AsyncIterator[None]:
     """Hold `exchange/.lock` so no other MCP server process uses the exchange meanwhile.
 
-    Polls a non-blocking flock rather than blocking, so the event loop stays responsive.
+    Polls a non-blocking lock (flock on POSIX, msvcrt.locking on Windows) rather than
+    blocking, so the event loop stays responsive.
     """
-    if fcntl is None:
-        yield
-        return
     EXCHANGE_DIR.mkdir(parents=True, exist_ok=True)
     fd = os.open(EXCHANGE_DIR / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:
         deadline = time.monotonic() + wait_s
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"another inkscape_mcp process held the exchange lock for over {wait_s:.0f}s"
-                    ) from None
-                await asyncio.sleep(0.05)
+        while not _try_lock(fd):
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"another inkscape_mcp process held the exchange lock for over {wait_s:.0f}s")
+            await asyncio.sleep(0.05)
         try:
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            _unlock(fd)
     finally:
         os.close(fd)
 

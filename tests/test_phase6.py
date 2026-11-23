@@ -400,7 +400,9 @@ async def test_get_document_xml_large_returns_path_and_summary(tmp_path, monkeyp
     monkeypatch.setattr(live, "_export_document_async", fake_export_async)
     monkeypatch.setattr(live, "_scratch_path", lambda: tmp_path / "snap.svg")
 
-    res = await live._op_get_document_xml(MagicMock(), "get_document_xml", json.dumps({"max_chars": 100}), time.perf_counter())
+    res = await live._op_get_document_xml(
+        MagicMock(), "get_document_xml", json.dumps({"max_chars": 100}), time.perf_counter()
+    )
     assert res["success"] is True
     assert "xml" not in res["data"]
     summary = res["data"]["summary"]

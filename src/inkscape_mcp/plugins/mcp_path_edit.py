@@ -79,6 +79,7 @@ def _claim_spec():
         spec.pop("_plugin", None)
     return spec
 
+
 _NODETYPES_ATTR = "{http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd}nodetypes"
 
 _VALID_OPS = frozenset(

@@ -458,7 +458,7 @@ def _summarize_svg(xml: str) -> dict[str, Any]:
 
     inkscape_ns = "{http://www.inkscape.org/namespaces/inkscape}"
     try:
-        root = ET.fromstring(xml.encode("utf-8"))
+        root = ET.fromstring(xml.encode("utf-8"))  # noqa: S314 — snapshot Inkscape just exported from the live document
     except ET.ParseError as exc:
         return {"parse_error": str(exc)}
     pages = [
@@ -490,9 +490,7 @@ def _summarize_svg(xml: str) -> dict[str, Any]:
     return {"viewBox": root.get("viewBox"), "pages": pages, "top_level": top}
 
 
-async def _op_get_document_xml(
-    bus: InkscapeDBus, operation: str, payload: str, start: float
-) -> dict[str, Any]:
+async def _op_get_document_xml(bus: InkscapeDBus, operation: str, payload: str, start: float) -> dict[str, Any]:
     """Snapshot the live document. Small documents come back inline; large ones as a path.
 
     ``payload`` — optional JSON ``{"full": true}`` to force the XML inline regardless of
@@ -510,7 +508,13 @@ async def _op_get_document_xml(
             args = parsed
     limit = args.get("max_chars", _DOCUMENT_XML_INLINE_LIMIT)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
-        return _result(operation, False, f"max_chars must be a non-negative integer (got {limit!r})", error="bad max_chars", start=start)
+        return _result(
+            operation,
+            False,
+            f"max_chars must be a non-negative integer (got {limit!r})",
+            error="bad max_chars",
+            start=start,
+        )
 
     scratch = _scratch_path()
     await _export_document_async(bus, scratch)
@@ -1186,7 +1190,9 @@ async def _op_rasterize(
     page = args.get("page")
     if page is not None:
         if not isinstance(page, int) or isinstance(page, bool) or page < 1:
-            return _result(operation, False, f"page must be an integer >= 1 (got {page!r})", error="bad page", start=start)
+            return _result(
+                operation, False, f"page must be an integer >= 1 (got {page!r})", error="bad page", start=start
+            )
         if area or target:
             return _result(
                 operation,
@@ -1238,7 +1244,15 @@ async def _op_rasterize(
     if page is not None:
         import tempfile
 
-        page_tmpdir = Path(tempfile.mkdtemp(prefix="inkmcppage", dir="/tmp" if os.name == "posix" else None))
+        # Snap and Flatpak give Inkscape a private /tmp the host never sees, so a
+        # sandboxed Inkscape exports into a dot-free dir under $HOME instead.
+        exe = str(config.inkscape_executable)
+        sandboxed = "/snap/" in exe or "flatpak" in exe
+        candidates = [Path.home(), Path(tempfile.gettempdir())]
+        if not sandboxed:
+            candidates.reverse()
+        base = next((c for c in candidates if "." not in str(c)), candidates[0])
+        page_tmpdir = Path(tempfile.mkdtemp(prefix="inkmcppage", dir=base))
         if "." in str(page_tmpdir):
             page_tmpdir.rmdir()
             return _result(
@@ -1352,7 +1366,7 @@ def _blank_png_warning(path: Path) -> str | None:
 
         with Image.open(path) as img:
             rgba = img.convert("RGBA")
-            extrema = rgba.getextrema()
+            extrema: tuple[tuple[int, int], ...] = rgba.getextrema()  # type: ignore[assignment]
     except Exception:  # Pillow missing or unreadable PNG: no opinion.
         return None
     if all(lo == hi for lo, hi in extrema):

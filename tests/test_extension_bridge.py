@@ -232,20 +232,17 @@ async def test_timeout_withdraws_input(tmp_exchange):
 
 async def test_cross_process_lock_excludes_other_holders(tmp_exchange):
     """While another process holds exchange/.lock, invoke waits instead of trampling."""
-    import fcntl
     import os
 
     ex, _ = tmp_exchange
     ex.mkdir(parents=True, exist_ok=True)
     fd = os.open(ex / ".lock", os.O_RDWR | os.O_CREAT, 0o600)
-    fcntl.flock(fd, fcntl.LOCK_EX)
+    assert bridge._try_lock(fd)
     bus = MagicMock()
     try:
-        result = await asyncio.wait_for(
-            _invoke_with_short_lock_wait(bus), timeout=5
-        )
+        result = await asyncio.wait_for(_invoke_with_short_lock_wait(bus), timeout=5)
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        bridge._unlock(fd)
         os.close(fd)
     assert result.success is False
     assert "exchange lock" in result.error
