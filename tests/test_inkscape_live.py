@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from inkscape_mcp import bus_manager
@@ -11,6 +13,14 @@ from tests._helpers import payload as _payload
 
 @pytest.fixture(scope="module", autouse=True)
 def _bridge_required():
+    # These tests act on whatever document is ACTIVE in the running GUI (insert_svg adds
+    # a circle, select-all changes the selection). Never run them against a user's real
+    # session by accident: opt in explicitly.
+    if os.environ.get("INKSCAPE_MCP_LIVE_TESTS") != "1":
+        pytest.skip(
+            "live GUI tests mutate the active document — set INKSCAPE_MCP_LIVE_TESTS=1 to run them",
+            allow_module_level=True,
+        )
     try:
         available = _get_bus(None).is_available()
     except Exception:
