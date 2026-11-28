@@ -7,11 +7,12 @@ This class is a drop-in for ``InkscapeDBus`` — identical method surface
 (``is_available``/``list_actions``/``describe``/``activate``/``open_file``/
 ``list_windows``) — selected by ``tools.live._get_bus()`` on managed platforms.
 
-Object-path note (Inkscape 1.4.x): app actions live at ``/org/inkscape/Inkscape``. This
-client routes both window and document scope to ``/org/inkscape/Inkscape/document/N``.
-On Linux, Inkscape also exports ``/org/inkscape/Inkscape/window/N``, which holds the
-window-only actions (``document-save``, ``paste-in-place``, ``layer-new``) that the
-jeepney client reaches; whether Windows and macOS export it too is unverified.
+Object-path note (Inkscape 1.4.x): app actions live at ``/org/inkscape/Inkscape``, window
+actions (``document-save``, ``paste-in-place``, ``layer-new``) at
+``/org/inkscape/Inkscape/window/N`` and document actions (``undo``, ``vacuum-defs``) at
+``/org/inkscape/Inkscape/document/N``. GTK exports the window objects only on some
+platforms (Linux does; macOS reportedly does not), so window scope uses ``/window/N``
+when Inkscape exports it and falls back to ``/document/N`` otherwise.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from .dbus_client import coerce_bool
 
 BUS_NAME = "org.inkscape.Inkscape"
 APP_PATH = "/org/inkscape/Inkscape"
+WINDOW_PATH_PREFIX = "/org/inkscape/Inkscape/window"
 DOCUMENT_PATH_PREFIX = "/org/inkscape/Inkscape/document"
 
 # gdbus call timeout (seconds). Actions are local IPC; generous for export-do etc.
@@ -45,6 +47,7 @@ class GDBusInkscapeDBus:
     def __init__(self, gdbus_path: str, bus_address: str) -> None:
         self._gdbus = gdbus_path
         self._address = bus_address
+        self._window_prefix: str | None = None
 
     # ---- low-level gdbus invocation -------------------------------------------------
 
@@ -88,10 +91,31 @@ class GDBusInkscapeDBus:
 
     # ---- scope helpers --------------------------------------------------------------
 
+    def _child_ids(self, prefix: str) -> list[int]:
+        """Numeric child nodes under ``prefix``; empty if the object does not exist."""
+        out = self._introspect(prefix)
+        return sorted({int(m.group(1)) for m in re.finditer(r"node\s+(\d+)\s*\{", out)})
+
+    def _window_path_prefix(self) -> str:
+        """``/window`` if Inkscape exports window objects on this platform, else ``/document``.
+
+        Probed once per client; clients are rebuilt per tool call, so a window opened later
+        is picked up on the next call.
+        """
+        if self._window_prefix is None:
+            try:
+                has_windows = bool(self._child_ids(WINDOW_PATH_PREFIX))
+            except GDBusError:
+                has_windows = False
+            self._window_prefix = WINDOW_PATH_PREFIX if has_windows else DOCUMENT_PATH_PREFIX
+        return self._window_prefix
+
     def _scope_path(self, scope: str, window_id: int) -> str:
         if scope == "app":
             return APP_PATH
-        if scope in ("window", "document"):
+        if scope == "window":
+            return f"{self._window_path_prefix()}/{window_id}"
+        if scope == "document":
             return f"{DOCUMENT_PATH_PREFIX}/{window_id}"
         raise ValueError(f"scope must be 'app', 'window' or 'document', got {scope!r}")
 
@@ -171,16 +195,11 @@ class GDBusInkscapeDBus:
         self._call(APP_PATH, "org.freedesktop.Application.Open", f"['{escaped}']", "{}")
 
     def list_windows(self) -> list[int]:
-        """Numeric child nodes under .../document — the live document/window ids."""
-        out = self._introspect(DOCUMENT_PATH_PREFIX)
-        ids: list[int] = []
-        for m in re.finditer(r"node\s+(\d+)\s*\{", out):
-            ids.append(int(m.group(1)))
-        return sorted(set(ids))
+        """Live window ids, or document ids where Inkscape exports no window objects."""
+        return self._child_ids(self._window_path_prefix())
 
     def list_documents(self) -> list[int]:
-        """Same ids as ``list_windows``: this client addresses windows by document."""
-        return self.list_windows()
+        return self._child_ids(DOCUMENT_PATH_PREFIX)
 
 
 # Backwards-compatible name; the class is no longer Windows-only.
